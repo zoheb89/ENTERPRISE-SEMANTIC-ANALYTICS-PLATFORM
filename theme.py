@@ -92,7 +92,48 @@ def inject_base_css():
 
 
 def render_sidebar_brand():
-    st.logo("assets/platform_logo.svg", size="large")
+    """
+    Render platform branding safely.
+
+    The logo is optional. The application must never fail to start
+    because an image asset is missing from the deployment repository.
+    """
+
+    logo_path = Path(__file__).resolve().parent / "assets" / "platform_logo.svg"
+
+    if logo_path.is_file():
+        try:
+            st.logo(str(logo_path), size="large")
+            return
+        except Exception:
+            # Never allow branding failure to stop the application.
+            pass
+
+    # Fallback branding when the optional logo isn't deployed.
+    st.sidebar.markdown(
+        """
+        <div style="
+            padding: 10px 8px 14px 8px;
+            margin-bottom: 8px;
+        ">
+            <div style="
+                font-size: 20px;
+                font-weight: 700;
+                letter-spacing: -0.3px;
+            ">
+                Enterprise Semantic
+            </div>
+            <div style="
+                font-size: 12px;
+                opacity: 0.65;
+                margin-top: 2px;
+            ">
+                AI Analytics Platform
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def page_header(title: str, subtitle: str):
