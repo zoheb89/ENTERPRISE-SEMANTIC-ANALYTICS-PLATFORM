@@ -567,9 +567,9 @@ def _chat_capgemini(
             "CAPGEMINI_LLM_API_KEY is missing."
         )
 
-    # ------------------------------------------------------------------
-    # Convert our internal chat messages into the Capgemini API format
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
+    # Build prompt
+    # ---------------------------------------------------------------
 
     system_parts = []
     user_parts = []
@@ -577,31 +577,20 @@ def _chat_capgemini(
     for message in messages:
 
         role = str(
-            message.get(
-                "role",
-                ""
-            )
+            message.get("role", "")
         ).lower()
 
         content = str(
-            message.get(
-                "content",
-                ""
-            )
+            message.get("content", "")
         )
 
         if role == "system":
-            system_parts.append(
-                content
-            )
+            system_parts.append(content)
 
         elif role == "user":
-            user_parts.append(
-                content
-            )
+            user_parts.append(content)
 
         elif role == "assistant":
-            # Preserve previous assistant context if supplied.
             user_parts.append(
                 f"Previous assistant response:\n{content}"
             )
@@ -616,18 +605,27 @@ def _chat_capgemini(
 
     if not system_prompt:
         system_prompt = (
-            "You are an enterprise analytics "
-            "assistant. Answer using only the "
-            "governed semantic model supplied "
-            "by the application."
+            "You are an enterprise analytics assistant. "
+            "Answer using only the governed semantic "
+            "model supplied by the application."
         )
 
-    # ------------------------------------------------------------------
-    # Capgemini /v2/11m/invoke payload
-    #
-    # This follows the request schema shown in
-    # the Capgemini API documentation.
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
+    # Session
+    # ---------------------------------------------------------------
+
+    session_id = str(
+        uuid.uuid4()
+    )
+
+    workspace_id = _secret(
+        "CAPGEMINI_WORKSPACE_ID",
+        "",
+    )
+
+    # ---------------------------------------------------------------
+    # Capgemini /v2/11m/invoke request
+    # ---------------------------------------------------------------
 
     payload = {
         "action": "run",
@@ -643,25 +641,13 @@ def _chat_capgemini(
 
             "modelName": model,
 
-            # Your existing working project identifies
-            # the provider as Azure while using the
-            # Capgemini Generative AI gateway.
+            # Your previous working project uses Azure
+            # as the model provider for openai.gpt-5.1.
             "provider": "azure",
 
             "systemPrompt": system_prompt,
 
-            # Generate a session for this invocation.
-            "sessionId": str(
-                uuid.uuid4()
-            ),
-
-            # If your Capgemini environment provides a
-            # workspace ID, use it. Otherwise generate
-            # one for the request.
-            "workspaceId": _secret(
-                "CAPGEMINI_WORKSPACE_ID",
-                str(uuid.uuid4()),
-            ),
+            "sessionId": session_id,
 
             "modelKwargs": {
                 "maxTokens": max_tokens,
@@ -672,15 +658,20 @@ def _chat_capgemini(
         },
     }
 
-    # ------------------------------------------------------------------
+    # Only include workspaceId if your Capgemini
+    # environment actually requires/provides one.
+    if workspace_id:
+        payload["data"]["workspaceId"] = workspace_id
+
+    # ---------------------------------------------------------------
     # Authentication
     #
-    # Capgemini documentation explicitly shows:
+    # Capgemini documentation:
     #
     # ApiKeyAuth
     # Name: x-api-key
     # In: header
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
 
     headers = {
         "Content-Type": "application/json",
@@ -710,9 +701,9 @@ def _chat_capgemini(
             f"Capgemini connection failed: {exc}"
         ) from exc
 
-    # ------------------------------------------------------------------
-    # Authentication failure
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
+    # Errors
+    # ---------------------------------------------------------------
 
     if response.status_code == 401:
 
@@ -722,21 +713,17 @@ def _chat_capgemini(
             "CAPGEMINI_LLM_API_KEY."
         )
 
-    # ------------------------------------------------------------------
-    # API failure
-    # ------------------------------------------------------------------
-
     if response.status_code >= 400:
 
         raise RuntimeError(
             "Capgemini request failed "
             f"HTTP {response.status_code}: "
-            f"{response.text[:3000]}"
+            f"{response.text[:4000]}"
         )
 
-    # ------------------------------------------------------------------
-    # Parse JSON
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
+    # Parse response
+    # ---------------------------------------------------------------
 
     try:
 
@@ -749,186 +736,76 @@ def _chat_capgemini(
             f"{response.text[:2000]}"
         ) from exc
 
-    # ------------------------------------------------------------------
-    # Extract generated text
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
+    # Capgemini response shown in your screenshot
+    # ---------------------------------------------------------------
 
-    text = _extract_capgemini_text(
-        data
-    )
+    text = None
 
-    return LLMResult(
-        text=text,
-        provider="capgemini",
-        model=model,
-    )
+    if isinstance(data, dict):
 
-    # -------------------------------------------------------------------------
-    # Authentication
-    # -------------------------------------------------------------------------
+        # Direct response:
+        # {
+        #   "type": "text",
+        #   "content": "Hello..."
+        # }
 
-    if response.status_code == 401:
+        if data.get("content"):
+            text = data["content"]
 
-        raise RuntimeError(
-            "Capgemini authentication failed "
-            "(HTTP 401). Verify that "
-            "CAPGEMINI_LLM_API_KEY contains the "
-            "exact current key and that "
-            "CAPGEMINI_AUTH_HEADER is correct."
-        )
-
-    # -------------------------------------------------------------------------
-    # Other HTTP failures
-    # -------------------------------------------------------------------------
-
-    if response.status_code >= 400:
-
-        body = response.text[:2000]
-
-        raise RuntimeError(
-            "Capgemini request failed "
-            f"HTTP {response.status_code}: {body}"
-        )
-
-    # -------------------------------------------------------------------------
-    # JSON
-    # -------------------------------------------------------------------------
-
-    try:
-
-        data = response.json()
-
-    except ValueError as exc:
-
-        raise RuntimeError(
-            "Capgemini returned a non-JSON response: "
-            f"{response.text[:1000]}"
-        ) from exc
-
-    text = _extract_capgemini_text(
-        data
-    )
-
-    return LLMResult(
-        text=text,
-        provider="capgemini",
-        model=model,
-    )
-
-
-# =============================================================================
-# AZURE OPENAI
-# =============================================================================
-
-
-def _azure_base_url() -> str:
-
-    endpoint = _secret(
-        "AZURE_OPENAI_ENDPOINT"
-    ).rstrip("/")
-
-    if not endpoint:
-
-        raise RuntimeError(
-            "AZURE_OPENAI_ENDPOINT is missing."
-        )
-
-    if endpoint.endswith(
-        "/openai/v1"
-    ):
-
-        return endpoint + "/"
-
-    if endpoint.endswith(
-        "/openai/v1/"
-    ):
-
-        return endpoint
-
-    if endpoint.endswith(
-        "/openai"
-    ):
-
-        return endpoint + "/v1/"
-
-    return (
-        endpoint
-        + "/openai/v1/"
-    )
-
-
-def _chat_azure(
-    messages: list[dict[str, str]],
-    temperature: float = 0.1,
-    max_tokens: int = 1200,
-) -> LLMResult:
-
-    endpoint = _azure_base_url()
-
-    api_key = _secret(
-        "AZURE_OPENAI_API_KEY"
-    )
-
-    deployment = _secret(
-        "AZURE_OPENAI_DEPLOYMENT"
-    )
-
-    if not api_key:
-
-        raise RuntimeError(
-            "AZURE_OPENAI_API_KEY is missing."
-        )
-
-    if not deployment:
-
-        raise RuntimeError(
-            "AZURE_OPENAI_DEPLOYMENT is missing."
-        )
-
-    response = requests.post(
-        endpoint + "chat/completions",
-        headers={
-            "Content-Type":
-                "application/json",
-            "api-key":
-                api_key,
-        },
-        json={
-            "model":
-                deployment,
-            "messages":
-                messages,
-            "temperature":
-                temperature,
-            "max_tokens":
-                max_tokens,
-        },
-        timeout=int(
-            _secret(
-                "LLM_TIMEOUT_SECONDS",
-                "90",
+        # Some APIs wrap response content.
+        if not text and isinstance(
+            data.get("data"),
+            dict,
+        ):
+            text = data["data"].get(
+                "content"
             )
-        ),
-    )
 
-    if response.status_code >= 400:
+        # Fallback for OpenAI-compatible response.
+        if not text:
+
+            choices = data.get(
+                "choices"
+            )
+
+            if (
+                isinstance(choices, list)
+                and choices
+            ):
+
+                first = choices[0]
+
+                if isinstance(
+                    first,
+                    dict,
+                ):
+
+                    message = first.get(
+                        "message"
+                    )
+
+                    if isinstance(
+                        message,
+                        dict,
+                    ):
+                        text = message.get(
+                            "content"
+                        )
+
+    if not text:
 
         raise RuntimeError(
-            "Azure OpenAI request failed "
-            f"HTTP {response.status_code}: "
-            f"{response.text[:1500]}"
+            "Capgemini returned HTTP 200, "
+            "but no generated text was found "
+            "in the response. Response keys: "
+            f"{list(data.keys()) if isinstance(data, dict) else type(data)}"
         )
 
-    data = response.json()
-
-    text = _extract_capgemini_text(
-        data
-    )
-
     return LLMResult(
-        text=text,
-        provider="azure",
-        model=deployment,
+        text=str(text).strip(),
+        provider="capgemini",
+        model=model,
     )
 
 
