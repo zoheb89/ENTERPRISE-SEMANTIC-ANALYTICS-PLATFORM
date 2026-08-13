@@ -542,6 +542,8 @@ def _chat_capgemini(
     max_tokens: int = 1200,
 ) -> LLMResult:
 
+    import uuid
+
     base_url = _secret(
         "CAPGEMINI_LLM_BASE_URL"
     ).rstrip("/")
@@ -565,63 +567,191 @@ def _chat_capgemini(
             "CAPGEMINI_LLM_API_KEY is missing."
         )
 
-    # Capgemini API documentation specifies:
-    # Header name: x-api-key
+    # ------------------------------------------------------------------
+    # Convert our internal chat messages into the Capgemini API format
+    # ------------------------------------------------------------------
+
+    system_parts = []
+    user_parts = []
+
+    for message in messages:
+
+        role = str(
+            message.get(
+                "role",
+                ""
+            )
+        ).lower()
+
+        content = str(
+            message.get(
+                "content",
+                ""
+            )
+        )
+
+        if role == "system":
+            system_parts.append(
+                content
+            )
+
+        elif role == "user":
+            user_parts.append(
+                content
+            )
+
+        elif role == "assistant":
+            # Preserve previous assistant context if supplied.
+            user_parts.append(
+                f"Previous assistant response:\n{content}"
+            )
+
+    system_prompt = "\n\n".join(
+        system_parts
+    ).strip()
+
+    user_text = "\n\n".join(
+        user_parts
+    ).strip()
+
+    if not system_prompt:
+        system_prompt = (
+            "You are an enterprise analytics "
+            "assistant. Answer using only the "
+            "governed semantic model supplied "
+            "by the application."
+        )
+
+    # ------------------------------------------------------------------
+    # Capgemini /v2/11m/invoke payload
+    #
+    # This follows the request schema shown in
+    # the Capgemini API documentation.
+    # ------------------------------------------------------------------
+
+    payload = {
+        "action": "run",
+
+        "modelInterface": "langchain",
+
+        "data": {
+            "mode": "chain",
+
+            "text": user_text,
+
+            "files": [],
+
+            "modelName": model,
+
+            # Your existing working project identifies
+            # the provider as Azure while using the
+            # Capgemini Generative AI gateway.
+            "provider": "azure",
+
+            "systemPrompt": system_prompt,
+
+            # Generate a session for this invocation.
+            "sessionId": str(
+                uuid.uuid4()
+            ),
+
+            # If your Capgemini environment provides a
+            # workspace ID, use it. Otherwise generate
+            # one for the request.
+            "workspaceId": _secret(
+                "CAPGEMINI_WORKSPACE_ID",
+                str(uuid.uuid4()),
+            ),
+
+            "modelKwargs": {
+                "maxTokens": max_tokens,
+                "temperature": temperature,
+                "streaming": False,
+                "topP": 0.9,
+            },
+        },
+    }
+
+    # ------------------------------------------------------------------
+    # Authentication
+    #
+    # Capgemini documentation explicitly shows:
+    #
+    # ApiKeyAuth
+    # Name: x-api-key
+    # In: header
+    # ------------------------------------------------------------------
+
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "x-api-key": api_key,
     }
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
+    timeout = int(
+        _secret(
+            "LLM_TIMEOUT_SECONDS",
+            "90",
+        )
+    )
 
     try:
+
         response = requests.post(
             base_url,
             headers=headers,
             json=payload,
-            timeout=int(
-                _secret(
-                    "LLM_TIMEOUT_SECONDS",
-                    "90",
-                )
-            ),
+            timeout=timeout,
         )
 
     except requests.RequestException as exc:
+
         raise RuntimeError(
             f"Capgemini connection failed: {exc}"
         ) from exc
 
+    # ------------------------------------------------------------------
+    # Authentication failure
+    # ------------------------------------------------------------------
+
     if response.status_code == 401:
+
         raise RuntimeError(
             "Capgemini authentication failed "
-            "(HTTP 401). The request used the "
-            "required x-api-key header. Verify "
-            "that CAPGEMINI_LLM_API_KEY is the "
-            "current valid key."
+            "(HTTP 401). Verify the current "
+            "CAPGEMINI_LLM_API_KEY."
         )
 
+    # ------------------------------------------------------------------
+    # API failure
+    # ------------------------------------------------------------------
+
     if response.status_code >= 400:
+
         raise RuntimeError(
             "Capgemini request failed "
             f"HTTP {response.status_code}: "
-            f"{response.text[:2000]}"
+            f"{response.text[:3000]}"
         )
 
+    # ------------------------------------------------------------------
+    # Parse JSON
+    # ------------------------------------------------------------------
+
     try:
+
         data = response.json()
 
     except ValueError as exc:
+
         raise RuntimeError(
             "Capgemini returned a non-JSON response: "
-            f"{response.text[:1000]}"
+            f"{response.text[:2000]}"
         ) from exc
+
+    # ------------------------------------------------------------------
+    # Extract generated text
+    # ------------------------------------------------------------------
 
     text = _extract_capgemini_text(
         data
