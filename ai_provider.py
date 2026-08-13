@@ -1,15 +1,28 @@
 """
-Enterprise Semantic Platform — AI Provider
+Enterprise Semantic Analytics Platform
+--------------------------------------
 
-Supports:
+Capgemini Enterprise LLM adapter.
 
-1. Azure OpenAI / Microsoft Foundry
-2. Capgemini OpenAI-compatible endpoint
-3. Generic OpenAI-compatible endpoint
+Important:
+The Capgemini endpoint used by the existing working application is:
 
-The semantic platform itself does NOT depend on an LLM.
-The LLM is an optional intelligence layer for Ask AI and
-AI-assisted semantic suggestions.
+    https://api.generative.engine.capgemini.com/v2/11m/invoke
+
+The previous application configured the provider as "azure" because
+it used Azure-style authentication/client behavior against the
+Capgemini endpoint.
+
+This implementation keeps the platform provider-neutral while
+supporting the Capgemini gateway explicitly.
+
+Supported:
+
+    AI_PROVIDER = "capgemini"
+
+    AI_PROVIDER = "azure"
+
+    AI_PROVIDER = "openai_compatible"
 """
 
 from __future__ import annotations
@@ -17,6 +30,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import requests
 import streamlit as st
@@ -26,6 +40,7 @@ import streamlit as st
 # RESULT
 # =============================================================================
 
+
 @dataclass
 class LLMResult:
     text: str
@@ -34,13 +49,19 @@ class LLMResult:
 
 
 # =============================================================================
-# SECRETS
+# SECRET HELPERS
 # =============================================================================
+
 
 def _secret(
     name: str,
     default: str = "",
 ) -> str:
+    """
+    Read a Streamlit secret safely.
+
+    Secret values are never logged or displayed.
+    """
 
     try:
         value = st.secrets.get(
@@ -60,7 +81,15 @@ def _secret(
 # PROVIDER
 # =============================================================================
 
+
 def provider_name() -> str:
+    """
+    Return the configured AI provider.
+
+    For the current Invent deployment this should be:
+
+        capgemini
+    """
 
     provider = _secret(
         "AI_PROVIDER",
@@ -70,25 +99,22 @@ def provider_name() -> str:
     if provider:
         return provider
 
-    # Auto-detect Azure
+    # Automatic fallback detection.
     if (
-        _secret("AZURE_OPENAI_ENDPOINT")
-        and (
-            _secret("AZURE_OPENAI_API_KEY")
-            or _secret("AZURE_OPENAI_DEPLOYMENT")
-        )
-    ):
-        return "azure"
-
-    # Auto-detect Capgemini
-    if _secret(
-        "CAPGEMINI_LLM_BASE_URL"
+        _secret("CAPGEMINI_LLM_BASE_URL")
+        and _secret("CAPGEMINI_LLM_API_KEY")
     ):
         return "capgemini"
 
-    # Generic provider
-    if _secret(
-        "LLM_BASE_URL"
+    if (
+        _secret("AZURE_OPENAI_ENDPOINT")
+        and _secret("AZURE_OPENAI_API_KEY")
+    ):
+        return "azure"
+
+    if (
+        _secret("LLM_BASE_URL")
+        and _secret("LLM_API_KEY")
     ):
         return "openai_compatible"
 
@@ -96,41 +122,19 @@ def provider_name() -> str:
 
 
 # =============================================================================
-# AVAILABILITY
+# CONFIGURATION STATUS
 # =============================================================================
 
-def is_available() -> bool:
+
+def configuration_status() -> dict[str, Any]:
+    """
+    Return safe configuration diagnostics.
+
+    IMPORTANT:
+    This never returns API-key values.
+    """
 
     provider = provider_name()
-
-    # -------------------------------------------------------------------------
-    # Azure OpenAI
-    # -------------------------------------------------------------------------
-
-    if provider == "azure":
-
-        endpoint = _secret(
-            "AZURE_OPENAI_ENDPOINT"
-        )
-
-        deployment = _secret(
-            "AZURE_OPENAI_DEPLOYMENT"
-        )
-
-        api_key = _secret(
-            "AZURE_OPENAI_API_KEY"
-        )
-
-        # API-key authentication
-        if (
-            endpoint
-            and deployment
-            and api_key
-        ):
-            return True
-
-        # Entra/service-token support can be added separately.
-        return False
 
     # -------------------------------------------------------------------------
     # Capgemini
@@ -138,17 +142,83 @@ def is_available() -> bool:
 
     if provider == "capgemini":
 
-        return bool(
-            _secret(
-                "CAPGEMINI_LLM_BASE_URL"
-            )
-            and _secret(
-                "CAPGEMINI_LLM_API_KEY"
-            )
-            and _secret(
-                "CAPGEMINI_LLM_MODEL"
-            )
-        )
+        required = {
+            "CAPGEMINI_LLM_BASE_URL":
+                bool(
+                    _secret(
+                        "CAPGEMINI_LLM_BASE_URL"
+                    )
+                ),
+
+            "CAPGEMINI_LLM_API_KEY":
+                bool(
+                    _secret(
+                        "CAPGEMINI_LLM_API_KEY"
+                    )
+                ),
+
+            "CAPGEMINI_LLM_MODEL":
+                bool(
+                    _secret(
+                        "CAPGEMINI_LLM_MODEL"
+                    )
+                ),
+        }
+
+        missing = [
+            key
+            for key, present
+            in required.items()
+            if not present
+        ]
+
+        return {
+            "provider": "capgemini",
+            "available": len(missing) == 0,
+            "missing": missing,
+        }
+
+    # -------------------------------------------------------------------------
+    # Azure
+    # -------------------------------------------------------------------------
+
+    if provider == "azure":
+
+        required = {
+            "AZURE_OPENAI_ENDPOINT":
+                bool(
+                    _secret(
+                        "AZURE_OPENAI_ENDPOINT"
+                    )
+                ),
+
+            "AZURE_OPENAI_API_KEY":
+                bool(
+                    _secret(
+                        "AZURE_OPENAI_API_KEY"
+                    )
+                ),
+
+            "AZURE_OPENAI_DEPLOYMENT":
+                bool(
+                    _secret(
+                        "AZURE_OPENAI_DEPLOYMENT"
+                    )
+                ),
+        }
+
+        missing = [
+            key
+            for key, present
+            in required.items()
+            if not present
+        ]
+
+        return {
+            "provider": "azure",
+            "available": len(missing) == 0,
+            "missing": missing,
+        }
 
     # -------------------------------------------------------------------------
     # Generic OpenAI-compatible
@@ -159,24 +229,431 @@ def is_available() -> bool:
         "enterprise",
     }:
 
-        return bool(
-            _secret(
-                "LLM_BASE_URL"
-            )
-            and _secret(
-                "LLM_API_KEY"
-            )
-            and _secret(
-                "LLM_MODEL"
-            )
+        required = {
+            "LLM_BASE_URL":
+                bool(
+                    _secret(
+                        "LLM_BASE_URL"
+                    )
+                ),
+
+            "LLM_API_KEY":
+                bool(
+                    _secret(
+                        "LLM_API_KEY"
+                    )
+                ),
+
+            "LLM_MODEL":
+                bool(
+                    _secret(
+                        "LLM_MODEL"
+                    )
+                ),
+        }
+
+        missing = [
+            key
+            for key, present
+            in required.items()
+            if not present
+        ]
+
+        return {
+            "provider": provider,
+            "available": len(missing) == 0,
+            "missing": missing,
+        }
+
+    return {
+        "provider": "none",
+        "available": False,
+        "missing": [],
+    }
+
+
+def is_available() -> bool:
+    return bool(
+        configuration_status()[
+            "available"
+        ]
+    )
+
+
+# =============================================================================
+# CAPGEMINI AUTHENTICATION
+# =============================================================================
+
+
+def _capgemini_headers() -> dict[str, str]:
+    """
+    Build Capgemini request headers.
+
+    IMPORTANT:
+    The default is api-key rather than:
+
+        Authorization: Bearer ...
+
+    because the previous working project used an Azure-style client
+    against the Capgemini endpoint.
+
+    The header can be overridden through:
+
+        CAPGEMINI_AUTH_HEADER
+
+    if Capgemini's enterprise gateway specifies another header.
+    """
+
+    api_key = _secret(
+        "CAPGEMINI_LLM_API_KEY"
+    )
+
+    if not api_key:
+
+        raise RuntimeError(
+            "CAPGEMINI_LLM_API_KEY is missing."
         )
 
-    return False
+    auth_header = _secret(
+        "CAPGEMINI_AUTH_HEADER",
+        "api-key",
+    )
+
+    return {
+        auth_header: api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
 
 # =============================================================================
-# ENDPOINT HELPERS
+# CAPGEMINI REQUEST BODY
 # =============================================================================
+
+
+def _capgemini_payload(
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+) -> dict[str, Any]:
+    """
+    Build the request payload.
+
+    The model shown in the existing working project is:
+
+        openai.gpt-5.1
+    """
+
+    model = _secret(
+        "CAPGEMINI_LLM_MODEL"
+    )
+
+    if not model:
+
+        raise RuntimeError(
+            "CAPGEMINI_LLM_MODEL is missing."
+        )
+
+    return {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+
+# =============================================================================
+# CAPGEMINI RESPONSE EXTRACTION
+# =============================================================================
+
+
+def _extract_capgemini_text(
+    data: Any,
+) -> str:
+    """
+    Extract text from the common response shapes.
+
+    Supports:
+
+        choices[0].message.content
+
+    and several common gateway variants.
+
+    We intentionally do not silently fabricate a response.
+    """
+
+    if not isinstance(
+        data,
+        dict,
+    ):
+
+        raise RuntimeError(
+            "Capgemini returned a non-object response."
+        )
+
+    # -------------------------------------------------------------------------
+    # OpenAI-compatible response
+    # -------------------------------------------------------------------------
+
+    choices = data.get(
+        "choices"
+    )
+
+    if isinstance(
+        choices,
+        list,
+    ) and choices:
+
+        first = choices[0]
+
+        if isinstance(
+            first,
+            dict,
+        ):
+
+            message = first.get(
+                "message"
+            )
+
+            if isinstance(
+                message,
+                dict,
+            ):
+
+                content = message.get(
+                    "content"
+                )
+
+                if content is not None:
+
+                    if isinstance(
+                        content,
+                        list,
+                    ):
+
+                        parts = []
+
+                        for item in content:
+
+                            if isinstance(
+                                item,
+                                dict,
+                            ):
+
+                                text = item.get(
+                                    "text"
+                                )
+
+                                if text:
+                                    parts.append(
+                                        str(text)
+                                    )
+
+                        if parts:
+                            return "\n".join(
+                                parts
+                            )
+
+                    return str(
+                        content
+                    ).strip()
+
+            text = first.get(
+                "text"
+            )
+
+            if text:
+                return str(
+                    text
+                ).strip()
+
+    # -------------------------------------------------------------------------
+    # Common direct response shapes
+    # -------------------------------------------------------------------------
+
+    for key in (
+        "output",
+        "response",
+        "text",
+        "content",
+        "answer",
+    ):
+
+        value = data.get(
+            key
+        )
+
+        if isinstance(
+            value,
+            str,
+        ) and value.strip():
+
+            return value.strip()
+
+    # -------------------------------------------------------------------------
+    # Nested output
+    # -------------------------------------------------------------------------
+
+    output = data.get(
+        "output"
+    )
+
+    if isinstance(
+        output,
+        dict,
+    ):
+
+        for key in (
+            "text",
+            "content",
+            "response",
+        ):
+
+            value = output.get(
+                key
+            )
+
+            if isinstance(
+                value,
+                str,
+            ) and value.strip():
+
+                return value.strip()
+
+    # -------------------------------------------------------------------------
+    # No known response shape
+    # -------------------------------------------------------------------------
+
+    raise RuntimeError(
+        "Capgemini response did not contain "
+        "recognizable generated text. "
+        f"Response keys: {list(data.keys())}"
+    )
+
+
+# =============================================================================
+# CAPGEMINI CHAT
+# =============================================================================
+
+
+def _chat_capgemini(
+    messages: list[dict[str, str]],
+    temperature: float = 0.1,
+    max_tokens: int = 1200,
+) -> LLMResult:
+    """
+    Call the Capgemini Generative AI endpoint.
+
+    This is the critical authentication fix.
+    """
+
+    base_url = _secret(
+        "CAPGEMINI_LLM_BASE_URL"
+    ).rstrip("/")
+
+    if not base_url:
+
+        raise RuntimeError(
+            "CAPGEMINI_LLM_BASE_URL is missing."
+        )
+
+    model = _secret(
+        "CAPGEMINI_LLM_MODEL"
+    )
+
+    if not model:
+
+        raise RuntimeError(
+            "CAPGEMINI_LLM_MODEL is missing."
+        )
+
+    headers = _capgemini_headers()
+
+    payload = _capgemini_payload(
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+    timeout = int(
+        _secret(
+            "LLM_TIMEOUT_SECONDS",
+            "90",
+        )
+    )
+
+    try:
+
+        response = requests.post(
+            base_url,
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+        )
+
+    except requests.RequestException as exc:
+
+        raise RuntimeError(
+            f"Capgemini connection failed: {exc}"
+        ) from exc
+
+    # -------------------------------------------------------------------------
+    # Authentication
+    # -------------------------------------------------------------------------
+
+    if response.status_code == 401:
+
+        raise RuntimeError(
+            "Capgemini authentication failed "
+            "(HTTP 401). Verify that "
+            "CAPGEMINI_LLM_API_KEY contains the "
+            "exact current key and that "
+            "CAPGEMINI_AUTH_HEADER is correct."
+        )
+
+    # -------------------------------------------------------------------------
+    # Other HTTP failures
+    # -------------------------------------------------------------------------
+
+    if response.status_code >= 400:
+
+        body = response.text[:2000]
+
+        raise RuntimeError(
+            "Capgemini request failed "
+            f"HTTP {response.status_code}: {body}"
+        )
+
+    # -------------------------------------------------------------------------
+    # JSON
+    # -------------------------------------------------------------------------
+
+    try:
+
+        data = response.json()
+
+    except ValueError as exc:
+
+        raise RuntimeError(
+            "Capgemini returned a non-JSON response: "
+            f"{response.text[:1000]}"
+        ) from exc
+
+    text = _extract_capgemini_text(
+        data
+    )
+
+    return LLMResult(
+        text=text,
+        provider="capgemini",
+        model=model,
+    )
+
+
+# =============================================================================
+# AZURE OPENAI
+# =============================================================================
+
 
 def _azure_base_url() -> str:
 
@@ -185,29 +662,27 @@ def _azure_base_url() -> str:
     ).rstrip("/")
 
     if not endpoint:
+
         raise RuntimeError(
             "AZURE_OPENAI_ENDPOINT is missing."
         )
 
-    # Current Azure OpenAI v1 API.
-    #
-    # Example:
-    #
-    # https://my-resource.openai.azure.com/openai/v1/
-    #
     if endpoint.endswith(
         "/openai/v1"
     ):
+
         return endpoint + "/"
 
     if endpoint.endswith(
         "/openai/v1/"
     ):
+
         return endpoint
 
     if endpoint.endswith(
         "/openai"
     ):
+
         return endpoint + "/v1/"
 
     return (
@@ -216,12 +691,8 @@ def _azure_base_url() -> str:
     )
 
 
-# =============================================================================
-# AZURE OPENAI
-# =============================================================================
-
 def _chat_azure(
-    messages: list[dict],
+    messages: list[dict[str, str]],
     temperature: float = 0.1,
     max_tokens: int = 1200,
 ) -> LLMResult:
@@ -237,11 +708,13 @@ def _chat_azure(
     )
 
     if not api_key:
+
         raise RuntimeError(
             "AZURE_OPENAI_API_KEY is missing."
         )
 
     if not deployment:
+
         raise RuntimeError(
             "AZURE_OPENAI_DEPLOYMENT is missing."
         )
@@ -249,19 +722,25 @@ def _chat_azure(
     response = requests.post(
         endpoint + "chat/completions",
         headers={
-            "Content-Type": "application/json",
-            "api-key": api_key,
+            "Content-Type":
+                "application/json",
+            "api-key":
+                api_key,
         },
         json={
-            "model": deployment,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "model":
+                deployment,
+            "messages":
+                messages,
+            "temperature":
+                temperature,
+            "max_tokens":
+                max_tokens,
         },
         timeout=int(
             _secret(
                 "LLM_TIMEOUT_SECONDS",
-                "60",
+                "90",
             )
         ),
     )
@@ -271,37 +750,17 @@ def _chat_azure(
         raise RuntimeError(
             "Azure OpenAI request failed "
             f"HTTP {response.status_code}: "
-            f"{response.text[:1000]}"
+            f"{response.text[:1500]}"
         )
 
     data = response.json()
 
-    try:
-
-        text = (
-            data[
-                "choices"
-            ][0][
-                "message"
-            ][
-                "content"
-            ]
-        )
-
-    except (
-        KeyError,
-        IndexError,
-        TypeError,
-    ) as exc:
-
-        raise RuntimeError(
-            "Azure OpenAI response did not contain "
-            "choices[0].message.content. "
-            f"Response: {data}"
-        ) from exc
+    text = _extract_capgemini_text(
+        data
+    )
 
     return LLMResult(
-        text=str(text).strip(),
+        text=text,
         provider="azure",
         model=deployment,
     )
@@ -311,17 +770,44 @@ def _chat_azure(
 # GENERIC OPENAI-COMPATIBLE
 # =============================================================================
 
+
 def _chat_openai_compatible(
-    base_url: str,
-    api_key: str,
-    model: str,
-    messages: list[dict],
+    messages: list[dict[str, str]],
     temperature: float = 0.1,
     max_tokens: int = 1200,
-    provider: str = "openai_compatible",
 ) -> LLMResult:
 
-    url = base_url.rstrip("/")
+    base_url = _secret(
+        "LLM_BASE_URL"
+    ).rstrip("/")
+
+    api_key = _secret(
+        "LLM_API_KEY"
+    )
+
+    model = _secret(
+        "LLM_MODEL"
+    )
+
+    if not base_url:
+
+        raise RuntimeError(
+            "LLM_BASE_URL is missing."
+        )
+
+    if not api_key:
+
+        raise RuntimeError(
+            "LLM_API_KEY is missing."
+        )
+
+    if not model:
+
+        raise RuntimeError(
+            "LLM_MODEL is missing."
+        )
+
+    url = base_url
 
     if not url.endswith(
         "/chat/completions"
@@ -332,23 +818,25 @@ def _chat_openai_compatible(
     response = requests.post(
         url,
         headers={
-            "Authorization": (
-                f"Bearer {api_key}"
-            ),
-            "Content-Type": (
-                "application/json"
-            ),
+            "Authorization":
+                f"Bearer {api_key}",
+            "Content-Type":
+                "application/json",
         },
         json={
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "model":
+                model,
+            "messages":
+                messages,
+            "temperature":
+                temperature,
+            "max_tokens":
+                max_tokens,
         },
         timeout=int(
             _secret(
                 "LLM_TIMEOUT_SECONDS",
-                "60",
+                "90",
             )
         ),
     )
@@ -356,59 +844,47 @@ def _chat_openai_compatible(
     if response.status_code >= 400:
 
         raise RuntimeError(
-            f"{provider} request failed "
+            "OpenAI-compatible request failed "
             f"HTTP {response.status_code}: "
-            f"{response.text[:1000]}"
+            f"{response.text[:1500]}"
         )
 
     data = response.json()
 
-    try:
-
-        text = (
-            data[
-                "choices"
-            ][0][
-                "message"
-            ][
-                "content"
-            ]
-        )
-
-    except (
-        KeyError,
-        IndexError,
-        TypeError,
-    ) as exc:
-
-        raise RuntimeError(
-            f"{provider} response did not contain "
-            "choices[0].message.content. "
-            f"Response: {data}"
-        ) from exc
+    text = _extract_capgemini_text(
+        data
+    )
 
     return LLMResult(
-        text=str(text).strip(),
-        provider=provider,
+        text=text,
+        provider="openai_compatible",
         model=model,
     )
 
 
 # =============================================================================
-# PUBLIC CHAT FUNCTION
+# PUBLIC CHAT API
 # =============================================================================
 
+
 def chat(
-    messages: list[dict],
+    messages: list[dict[str, str]],
     temperature: float = 0.1,
     max_tokens: int = 1200,
 ) -> LLMResult:
+    """
+    Public entry point used by Ask AI.
+    """
 
     provider = provider_name()
 
-    # -------------------------------------------------------------------------
-    # Azure
-    # -------------------------------------------------------------------------
+    if provider == "capgemini":
+
+        return _chat_capgemini(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     if provider == "azure":
 
@@ -418,55 +894,20 @@ def chat(
             max_tokens=max_tokens,
         )
 
-    # -------------------------------------------------------------------------
-    # Capgemini
-    # -------------------------------------------------------------------------
-
-    if provider == "capgemini":
-
-        return _chat_openai_compatible(
-            base_url=_secret(
-                "CAPGEMINI_LLM_BASE_URL"
-            ),
-            api_key=_secret(
-                "CAPGEMINI_LLM_API_KEY"
-            ),
-            model=_secret(
-                "CAPGEMINI_LLM_MODEL"
-            ),
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            provider="capgemini",
-        )
-
-    # -------------------------------------------------------------------------
-    # Generic enterprise OpenAI-compatible
-    # -------------------------------------------------------------------------
-
     if provider in {
         "openai_compatible",
         "enterprise",
     }:
 
         return _chat_openai_compatible(
-            base_url=_secret(
-                "LLM_BASE_URL"
-            ),
-            api_key=_secret(
-                "LLM_API_KEY"
-            ),
-            model=_secret(
-                "LLM_MODEL"
-            ),
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
-            provider=provider,
         )
 
     raise RuntimeError(
-        "No supported enterprise LLM provider is configured."
+        "No supported enterprise AI provider "
+        "is configured."
     )
 
 
@@ -474,13 +915,18 @@ def chat(
 # JSON EXTRACTION
 # =============================================================================
 
-def extract_json(text: str):
+
+def extract_json(
+    text: str,
+):
+    """
+    Extract JSON returned by the LLM.
+    """
 
     cleaned = str(
         text
     ).strip()
 
-    # Remove Markdown JSON fences.
     cleaned = re.sub(
         r"^```(?:json)?",
         "",
