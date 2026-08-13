@@ -541,61 +541,97 @@ def _chat_capgemini(
     temperature: float = 0.1,
     max_tokens: int = 1200,
 ) -> LLMResult:
-    """
-    Call the Capgemini Generative AI endpoint.
-
-    This is the critical authentication fix.
-    """
 
     base_url = _secret(
         "CAPGEMINI_LLM_BASE_URL"
     ).rstrip("/")
 
-    if not base_url:
+    api_key = _secret(
+        "CAPGEMINI_LLM_API_KEY"
+    )
 
+    model = _secret(
+        "CAPGEMINI_LLM_MODEL",
+        "openai.gpt-5.1",
+    )
+
+    if not base_url:
         raise RuntimeError(
             "CAPGEMINI_LLM_BASE_URL is missing."
         )
 
-    model = _secret(
-        "CAPGEMINI_LLM_MODEL"
-    )
-
-    if not model:
-
+    if not api_key:
         raise RuntimeError(
-            "CAPGEMINI_LLM_MODEL is missing."
+            "CAPGEMINI_LLM_API_KEY is missing."
         )
 
-    headers = _capgemini_headers()
+    # Capgemini API documentation specifies:
+    # Header name: x-api-key
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "x-api-key": api_key,
+    }
 
-    payload = _capgemini_payload(
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-
-    timeout = int(
-        _secret(
-            "LLM_TIMEOUT_SECONDS",
-            "90",
-        )
-    )
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
 
     try:
-
         response = requests.post(
             base_url,
             headers=headers,
             json=payload,
-            timeout=timeout,
+            timeout=int(
+                _secret(
+                    "LLM_TIMEOUT_SECONDS",
+                    "90",
+                )
+            ),
         )
 
     except requests.RequestException as exc:
-
         raise RuntimeError(
             f"Capgemini connection failed: {exc}"
         ) from exc
+
+    if response.status_code == 401:
+        raise RuntimeError(
+            "Capgemini authentication failed "
+            "(HTTP 401). The request used the "
+            "required x-api-key header. Verify "
+            "that CAPGEMINI_LLM_API_KEY is the "
+            "current valid key."
+        )
+
+    if response.status_code >= 400:
+        raise RuntimeError(
+            "Capgemini request failed "
+            f"HTTP {response.status_code}: "
+            f"{response.text[:2000]}"
+        )
+
+    try:
+        data = response.json()
+
+    except ValueError as exc:
+        raise RuntimeError(
+            "Capgemini returned a non-JSON response: "
+            f"{response.text[:1000]}"
+        ) from exc
+
+    text = _extract_capgemini_text(
+        data
+    )
+
+    return LLMResult(
+        text=text,
+        provider="capgemini",
+        model=model,
+    )
 
     # -------------------------------------------------------------------------
     # Authentication
