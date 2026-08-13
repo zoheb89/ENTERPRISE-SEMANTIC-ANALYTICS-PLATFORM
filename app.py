@@ -1,0 +1,27 @@
+import streamlit as st
+
+st.set_page_config(
+    page_title="Enterprise Semantic Analytics Platform",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+home = st.Page("pages/0_Home.py", title="Home", icon=":material/home:", default=True)
+onboarding = st.Page("pages/1_Data_Onboarding.py", title="Data Onboarding", icon=":material/upload_file:")
+analysis = st.Page("pages/2_AI_Analysis.py", title="AI Analysis", icon=":material/psychology:")
+intelligence = st.Page("pages/3_Semantic_Intelligence.py", title="Semantic Intelligence", icon=":material/hub:")
+business_model = st.Page("pages/4_Business_Model.py", title="Business Model", icon=":material/schema:")
+analytics = st.Page("pages/5_Analytics.py", title="Analytics", icon=":material/bar_chart:")
+ask_ai = st.Page("pages/6_Ask_AI.py", title="Ask AI", icon=":material/chat:")
+security = st.Page("pages/7_Security_Center.py", title="Security Center", icon=":material/shield:")
+
+pg = st.navigation(
+    {
+        "": [home],
+        "Create — Data to Semantic Model": [onboarding, analysis, intelligence, business_model],
+        "Analyze — Semantic Model to Insight": [analytics, ask_ai],
+        "Govern": [security],
+    }
+)
+pg.run()
