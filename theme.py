@@ -106,10 +106,8 @@ def render_sidebar_brand():
             st.logo(str(logo_path), size="large")
             return
         except Exception:
-            # Never allow branding failure to stop the application.
             pass
 
-    # Fallback branding when the optional logo isn't deployed.
     st.sidebar.markdown(
         """
         <div style="
@@ -134,7 +132,6 @@ def render_sidebar_brand():
         """,
         unsafe_allow_html=True,
     )
-
 
 def page_header(title: str, subtitle: str):
     st.markdown(
