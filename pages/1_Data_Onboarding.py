@@ -33,6 +33,16 @@ if "stage" not in st.session_state:
 if "llm_suggestion_count" not in st.session_state:
     st.session_state.llm_suggestion_count = 0
 
+# Stable widget state. These must NOT be overwritten during rendering.
+if "onboarding_source" not in st.session_state:
+    st.session_state.onboarding_source = "Upload files"
+
+if "onboarding_sample_domain" not in st.session_state:
+    st.session_state.onboarding_sample_domain = "Healthcare"
+
+if "onboarding_upload_domain" not in st.session_state:
+    st.session_state.onboarding_upload_domain = ""
+
 
 # =============================================================================
 # SAMPLE DATA
@@ -265,17 +275,14 @@ with st.container(border=True):
 
     st.markdown("**Domain name**")
 
-    domain_input = st.text_input(
-        "Domain name",
-        value=st.session_state.domain_name,
-        placeholder="e.g. Healthcare, Finance, Retail — any name",
-        label_visibility="collapsed",
-    )
-
-    # For uploaded data, the user's entered domain is authoritative.
-    st.session_state.domain_name = domain_input.strip()
-
-    st.markdown("**Choose a data source**")
+    # IMPORTANT:
+    # Do not mutate st.session_state.domain_name while the text_input is
+    # rendering. Streamlit reruns the script on every widget interaction,
+    # and changing another widget's state during that rerun can make the
+    # visible selection appear to jump/reset.
+    #
+    # The onboarding widgets have stable keys, and the selected values are
+    # committed to session state only when the user clicks Analyze.
 
     source = st.radio(
         "Source",
@@ -283,17 +290,64 @@ with st.container(border=True):
             "Upload files",
             "Try a sample domain",
         ],
+        key="onboarding_source",
         label_visibility="collapsed",
         horizontal=True,
     )
 
     files = {}
+    selected_domain = ""
+
+    # -------------------------------------------------------------------------
+    # SAMPLE DOMAIN
+    # -------------------------------------------------------------------------
+
+    if source == "Try a sample domain":
+
+        sample_choice = st.selectbox(
+            "Sample domain",
+            [
+                "Healthcare",
+                "Finance",
+                "Retail",
+            ],
+            key="onboarding_sample_domain",
+        )
+
+        # The selectbox is the source of truth for sample mode.
+        selected_domain = sample_choice
+
+        files = load_sample_domain(
+            sample_choice
+        )
+
+        st.caption(
+            f"{len(files)} sample tables ready: "
+            f"{', '.join(files.keys())}"
+        )
+
+        st.info(
+            f"Sample domain selected: **{sample_choice}**"
+        )
 
     # -------------------------------------------------------------------------
     # USER UPLOAD
     # -------------------------------------------------------------------------
 
-    if source == "Upload files":
+    else:
+
+        domain_input = st.text_input(
+            "Domain name",
+            value=st.session_state.get(
+                "onboarding_upload_domain",
+                "",
+            ),
+            key="onboarding_upload_domain",
+            placeholder="e.g. Healthcare, Finance, Retail — any name",
+            label_visibility="collapsed",
+        )
+
+        selected_domain = domain_input.strip()
 
         uploaded = st.file_uploader(
             "Upload CSV or Excel files",
@@ -303,6 +357,7 @@ with st.container(border=True):
                 "xls",
             ],
             accept_multiple_files=True,
+            key="onboarding_uploaded_files",
         )
 
         if uploaded:
@@ -324,72 +379,58 @@ with st.container(border=True):
                         f"Couldn't read {f.name}: {exc}"
                     )
 
-    # -------------------------------------------------------------------------
-    # SAMPLE DOMAIN
-    # -------------------------------------------------------------------------
-
-    else:
-
-        sample_choice = st.selectbox(
-            "Sample domain",
-            [
-                "Healthcare",
-                "Finance",
-                "Retail",
-            ],
-            key="sample_domain_choice",
-        )
-
-        # CRITICAL FIX:
-        #
-        # Previously this was:
-        #
-        #     if not st.session_state.domain_name:
-        #         st.session_state.domain_name = sample_choice
-        #
-        # That meant once Healthcare was selected, changing the sample selector
-        # to Finance or Retail did NOT change domain_name.
-        #
-        # The selected sample must always drive the domain.
-        st.session_state.domain_name = sample_choice
-
-        files = load_sample_domain(
-            sample_choice
-        )
-
-        st.caption(
-            f"{len(files)} sample tables ready: "
-            f"{', '.join(files.keys())}"
-        )
-
-        st.info(
-            f"Sample domain selected: **{sample_choice}**"
-        )
-
-
     st.markdown(
         "<br>",
         unsafe_allow_html=True,
     )
 
+    can_analyze = bool(
+        files
+        and selected_domain
+    )
+
     go = st.button(
         "Analyze My Data →",
         type="primary",
-        disabled=not (
-            files
-            and bool(
-                st.session_state.domain_name
-            )
-        ),
+        disabled=not can_analyze,
+        key="analyze_current_onboarding",
     )
 
     if (
-        not st.session_state.domain_name
+        not selected_domain
         and files
     ):
         st.caption(
             "Enter a domain name above to continue."
         )
+
+
+# =============================================================================
+# START ANALYSIS
+# =============================================================================
+
+if go:
+
+    # Commit the selected domain ONLY when Analyze is clicked.
+    st.session_state.domain_name = selected_domain.strip()
+
+    # CRITICAL:
+    # Completely replace the current in-memory model with this run's data.
+    # No previous Healthcare/Finance/Retail model can leak into the next run.
+    st.session_state.model = None
+    st.session_state.llm_suggestion_count = 0
+
+    # Store only this run's files.
+    st.session_state.uploaded_files = {
+        name: dataframe.copy()
+        for name, dataframe in files.items()
+    }
+
+    st.session_state.stage = "processing"
+
+    st.switch_page(
+        "pages/2_AI_Analysis.py"
+    )
 
 
 # =============================================================================
