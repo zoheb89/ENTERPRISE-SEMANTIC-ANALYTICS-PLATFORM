@@ -3,6 +3,7 @@ Enterprise Semantic Analytics Platform — shared visual system.
 """
 
 import streamlit as st
+from pathlib import Path
 
 NAVY = "#0F1F35"
 NAVY_DEEP = "#0A1626"
