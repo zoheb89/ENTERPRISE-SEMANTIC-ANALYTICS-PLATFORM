@@ -1,11 +1,45 @@
 """
 Enterprise Semantic Analytics Platform
-Metadata-driven Analytics Engine.
+--------------------------------------
 
-This module intentionally contains NO domain-specific logic.
+Metadata-driven analytics engine.
 
-Finance, Healthcare, Retail, Banking, etc. are discovered from the
-metadata registry and rendered using the same dashboard engine.
+IMPORTANT ARCHITECTURE PRINCIPLE
+---------------------------------
+This module contains NO domain-specific logic.
+
+It consumes RegistryEntry objects produced by registry.py and dynamically
+renders analytics from:
+
+    RegistryEntry
+        |
+        +-- domain_name
+        +-- metric_view
+        +-- fact_table
+        +-- measures
+        +-- dimensions
+        +-- default_kpi
+        +-- row_count
+        +-- published_at
+        |
+        v
+    Databricks Metric View
+        |
+        v
+    Metadata-driven Analytics
+
+The same code therefore works for:
+
+    Healthcare
+    Finance
+    Retail
+    Banking
+    Insurance
+    Manufacturing
+    Telecom
+    etc.
+
+No domain-specific SQL is hardcoded here.
 """
 
 from __future__ import annotations
@@ -19,36 +53,293 @@ import streamlit as st
 from registry import list_domains
 
 
-def _safe_identifier(value: str) -> str:
+# =============================================================================
+# REGISTRY HELPERS
+# =============================================================================
+
+
+def _entry_get(entry: Any, field: str, default=None):
     """
-    Protect SQL identifiers generated from registry metadata.
+    Safely read a field from either:
+
+        RegistryEntry dataclass/object
+
+    or:
+
+        dictionary
+
+    This makes the analytics layer tolerant of minor registry
+    implementation differences.
     """
-    if not value or not re.fullmatch(r"[A-Za-z0-9_.$]+", value):
-        raise ValueError(f"Unsafe SQL identifier: {value!r}")
+
+    if entry is None:
+        return default
+
+    if isinstance(entry, dict):
+        return entry.get(field, default)
+
+    return getattr(entry, field, default)
+
+
+def _entry_domain_name(entry: Any) -> str:
+    return str(
+        _entry_get(
+            entry,
+            "domain_name",
+            "Unknown Domain",
+        )
+    )
+
+
+def _entry_metric_view(entry: Any) -> str:
+    return str(
+        _entry_get(
+            entry,
+            "metric_view",
+            "",
+        )
+    )
+
+
+def _entry_measures(entry: Any) -> list[str]:
+    measures = _entry_get(entry, "measures", [])
+
+    if not measures:
+        return []
+
+    return [
+        str(x).strip()
+        for x in measures
+        if str(x).strip()
+    ]
+
+
+def _entry_dimensions(entry: Any) -> list[str]:
+    dimensions = _entry_get(entry, "dimensions", [])
+
+    if not dimensions:
+        return []
+
+    return [
+        str(x).strip()
+        for x in dimensions
+        if str(x).strip()
+    ]
+
+
+# =============================================================================
+# DOMAIN RESOLUTION
+# =============================================================================
+
+
+def _resolve_domain_entry(domain: Any):
+    """
+    Resolve the selected domain into the actual RegistryEntry.
+
+    Supports ALL of these:
+
+        render_domain_dashboard("Healthcare")
+
+        render_domain_dashboard(registry_entry)
+
+        render_domain_dashboard({"domain_name": "Healthcare", ...})
+
+    The previous implementation incorrectly assumed the argument was
+    always a string. Your 5_Analytics.py is passing the actual RegistryEntry,
+    which caused:
+
+        Domain 'RegistryEntry(...)' is not present...
+
+    This function fixes that.
+    """
+
+    if domain is None:
+        return None
+
+    # -------------------------------------------------------------------------
+    # Case 1:
+    # Already a RegistryEntry object.
+    # -------------------------------------------------------------------------
+    if not isinstance(domain, str):
+        domain_name = _entry_get(domain, "domain_name")
+
+        if domain_name:
+            return domain
+
+    # -------------------------------------------------------------------------
+    # Case 2:
+    # Domain name string.
+    # -------------------------------------------------------------------------
+    domain_name = str(domain).strip()
+
+    if not domain_name:
+        return None
+
+    try:
+        domains = list_domains()
+    except Exception:
+        return None
+
+    for entry in domains or []:
+        if _entry_domain_name(entry).lower() == domain_name.lower():
+            return entry
+
+    return None
+
+
+# =============================================================================
+# SQL SAFETY
+# =============================================================================
+
+
+def _validate_identifier(value: str, label: str = "identifier") -> str:
+    """
+    Validate identifiers coming from the governed registry.
+
+    We do not allow arbitrary SQL fragments to be injected into
+    generated analytics queries.
+    """
+
+    value = str(value or "").strip()
+
+    if not value:
+        raise ValueError(f"Empty {label}.")
+
+    # Allow:
+    #
+    # catalog.schema.view
+    # table.column
+    # metric_name
+    #
+    # but no SQL operators, quotes, spaces, comments, etc.
+    if not re.fullmatch(
+        r"[A-Za-z0-9_.$]+",
+        value,
+    ):
+        raise ValueError(
+            f"Unsafe {label}: {value!r}"
+        )
+
     return value
+
+
+def _quote_identifier(value: str, label: str = "identifier") -> str:
+    """
+    Convert a metadata identifier into a Databricks SQL quoted identifier.
+
+    Example:
+
+        patient_name
+            ->
+        `patient_name`
+    """
+
+    value = _validate_identifier(
+        value,
+        label,
+    )
+
+    # Quote each identifier component separately.
+    #
+    # catalog.schema.view
+    #
+    # becomes:
+    #
+    # `catalog`.`schema`.`view`
+    #
+    parts = value.split(".")
+
+    return ".".join(
+        f"`{part}`"
+        for part in parts
+    )
+
+
+# =============================================================================
+# DATABRICKS CONNECTION
+# =============================================================================
 
 
 def _get_sql_connection():
     """
-    Reuse the application's Databricks SQL connection.
+    Reuse the application's existing Databricks SQL connection.
 
-    publish_engine already owns the Databricks connection logic, so the
-    analytics layer does not duplicate authentication.
+    Authentication remains centralized in publish_engine.py.
+
+    Analytics does NOT create another authentication mechanism.
     """
+
     from publish_engine import get_sql_connection
 
     return get_sql_connection()
 
 
-def _query(sql: str) -> pd.DataFrame:
+def _execute_query(sql: str) -> pd.DataFrame:
     """
-    Execute a read-only analytics query.
+    Execute one read-only analytical query.
     """
+
+    sql = str(sql).strip()
+
+    if not sql:
+        raise ValueError("Empty SQL query.")
+
+    upper = sql.upper()
+
+    # -------------------------------------------------------------------------
+    # Basic read-only protection.
+    # -------------------------------------------------------------------------
+
+    if not (
+        upper.startswith("SELECT")
+        or upper.startswith("WITH")
+    ):
+        raise ValueError(
+            "Analytics query must be read-only."
+        )
+
+    # No multiple statements.
+    stripped = sql.rstrip(";")
+
+    if ";" in stripped:
+        raise ValueError(
+            "Multiple SQL statements are not allowed."
+        )
+
+    forbidden = [
+        " INSERT ",
+        " UPDATE ",
+        " DELETE ",
+        " MERGE ",
+        " DROP ",
+        " ALTER ",
+        " CREATE ",
+        " TRUNCATE ",
+        " GRANT ",
+        " REVOKE ",
+        " CALL ",
+    ]
+
+    padded = f" {upper} "
+
+    for keyword in forbidden:
+        if keyword in padded:
+            raise ValueError(
+                f"Forbidden SQL operation detected: {keyword.strip()}"
+            )
+
+    # -------------------------------------------------------------------------
+    # Execute.
+    # -------------------------------------------------------------------------
+
     with _get_sql_connection() as conn:
+
         with conn.cursor() as cursor:
+
             cursor.execute(sql)
 
             rows = cursor.fetchall()
+
             description = cursor.description or []
 
             columns = [
@@ -56,351 +347,686 @@ def _query(sql: str) -> pd.DataFrame:
                 for column in description
             ]
 
-    return pd.DataFrame(rows, columns=columns)
+    return pd.DataFrame(
+        rows,
+        columns=columns,
+    )
 
 
-def _metric_name_to_sql(metric: str) -> str:
+# =============================================================================
+# METRIC VIEW SQL
+# =============================================================================
+
+
+def _measure_expression(measure: str) -> str:
     """
-    Convert a registry metric name to a safe SQL expression.
+    Generate a Metric View measure expression.
 
-    Metric View measures are expected to be used through MEASURE().
+    Databricks Metric View syntax:
+
+        MEASURE(`measure_name`)
     """
-    metric = str(metric).strip()
 
-    if not metric:
-        raise ValueError("Empty metric name.")
+    measure = _validate_identifier(
+        measure,
+        "measure",
+    )
 
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", metric):
-        raise ValueError(f"Unsafe metric name: {metric}")
-
-    return f"MEASURE(`{metric}`)"
+    return f"MEASURE(`{measure}`)"
 
 
-def _dimension_name_to_sql(dimension: str) -> str:
-    dimension = str(dimension).strip()
+def _dimension_expression(dimension: str) -> str:
+    """
+    Generate a safe dimension expression.
+    """
 
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", dimension):
-        raise ValueError(f"Unsafe dimension name: {dimension}")
+    dimension = _validate_identifier(
+        dimension,
+        "dimension",
+    )
 
     return f"`{dimension}`"
 
 
-def _entry_value(entry: Any, name: str, default=None):
+def _metric_view_expression(entry: Any) -> str:
     """
-    Registry entries may be dataclasses or dictionaries depending on
-    the version of the registry module.
+    Get the fully qualified Metric View from the registry.
     """
-    if isinstance(entry, dict):
-        return entry.get(name, default)
 
-    return getattr(entry, name, default)
+    metric_view = _entry_metric_view(entry)
 
-
-def _get_domain_entry(domain_name: str):
-    domains = list_domains()
-
-    for entry in domains:
-        if _entry_value(entry, "domain_name") == domain_name:
-            return entry
-
-    return None
-
-
-def _metric_view(entry) -> str:
-    value = _entry_value(entry, "metric_view")
-
-    if not value:
+    if not metric_view:
         raise ValueError(
-            f"No Metric View is registered for "
-            f"{_entry_value(entry, 'domain_name', 'selected domain')}."
+            f"No Metric View registered for "
+            f"domain '{_entry_domain_name(entry)}'."
         )
 
-    return _safe_identifier(value)
+    return _quote_identifier(
+        metric_view,
+        "Metric View",
+    )
 
 
-def _get_measures(entry) -> list[str]:
-    measures = _entry_value(entry, "measures", [])
-
-    if measures is None:
-        return []
-
-    return [str(x) for x in measures if str(x).strip()]
+# =============================================================================
+# VALUE FORMATTING
+# =============================================================================
 
 
-def _get_dimensions(entry) -> list[str]:
-    dimensions = _entry_value(entry, "dimensions", [])
+def _format_value(value: Any) -> str:
 
-    if dimensions is None:
-        return []
-
-    return [str(x) for x in dimensions if str(x).strip()]
-
-
-def _render_kpi_cards(entry):
-    """
-    Render metadata-driven KPI cards.
-
-    No Finance/Healthcare/Retail-specific code exists here.
-    """
-    measures = _get_measures(entry)
-
-    if not measures:
-        st.info("No measures are registered for this domain yet.")
-        return
-
-    # Display at most four KPIs in the first row.
-    selected = measures[:4]
-
-    columns = st.columns(len(selected))
-
-    metric_view = _metric_view(entry)
-
-    for column, measure in zip(columns, selected):
-        try:
-            expression = _metric_name_to_sql(measure)
-
-            sql = f"""
-                SELECT {expression} AS metric_value
-                FROM {metric_view}
-            """
-
-            result = _query(sql)
-
-            value = None
-
-            if not result.empty:
-                value = result.iloc[0]["metric_value"]
-
-            with column:
-                st.metric(
-                    label=measure.replace("_", " ").title(),
-                    value=_format_value(value),
-                )
-
-        except Exception as exc:
-            with column:
-                st.metric(
-                    label=measure.replace("_", " ").title(),
-                    value="—",
-                )
-                st.caption(f"Unable to calculate: {exc}")
-
-
-def _format_value(value) -> str:
     if value is None:
         return "—"
 
-    if pd.isna(value):
-        return "—"
-
-    if isinstance(value, float):
-        if abs(value) >= 1_000_000:
-            return f"{value / 1_000_000:.2f}M"
-
-        if abs(value) >= 1_000:
-            return f"{value / 1_000:.1f}K"
-
-        return f"{value:,.2f}"
-
-    if isinstance(value, int):
-        return f"{value:,}"
-
     try:
-        number = float(value)
 
-        if abs(number) >= 1_000_000:
-            return f"{number / 1_000_000:.2f}M"
-
-        if abs(number) >= 1_000:
-            return f"{number / 1_000:.1f}K"
+        if pd.isna(value):
+            return "—"
 
     except Exception:
         pass
 
-    return str(value)
+    # Integer
+    if isinstance(value, int):
+        return f"{value:,}"
+
+    # Float
+    if isinstance(value, float):
+
+        absolute = abs(value)
+
+        if absolute >= 1_000_000_000:
+            return f"{value / 1_000_000_000:.2f}B"
+
+        if absolute >= 1_000_000:
+            return f"{value / 1_000_000:.2f}M"
+
+        if absolute >= 1_000:
+            return f"{value / 1_000:.1f}K"
+
+        return f"{value:,.2f}"
+
+    # Numeric values from numpy / Decimal etc.
+    try:
+
+        numeric = float(value)
+
+        if numeric.is_integer():
+            return f"{int(numeric):,}"
+
+        absolute = abs(numeric)
+
+        if absolute >= 1_000_000_000:
+            return f"{numeric / 1_000_000_000:.2f}B"
+
+        if absolute >= 1_000_000:
+            return f"{numeric / 1_000_000:.2f}M"
+
+        if absolute >= 1_000:
+            return f"{numeric / 1_000:.1f}K"
+
+        return f"{numeric:,.2f}"
+
+    except Exception:
+        return str(value)
 
 
-def _render_dimension_analysis(entry):
-    """
-    Render a generic dimension-versus-measure analysis.
+def _pretty_name(value: str) -> str:
 
-    The first registered dimension and first registered measure are used.
-    The dashboard automatically changes when the domain changes.
-    """
-    dimensions = _get_dimensions(entry)
-    measures = _get_measures(entry)
+    value = str(value)
+
+    value = value.replace("_", " ")
+
+    return value.title()
+
+
+# =============================================================================
+# KPI CALCULATIONS
+# =============================================================================
+
+
+def _calculate_measure(
+    entry: Any,
+    measure: str,
+) -> Any:
+
+    metric_view = _metric_view_expression(entry)
+
+    measure_expression = _measure_expression(
+        measure
+    )
+
+    sql = f"""
+SELECT
+    {measure_expression} AS metric_value
+FROM {metric_view}
+"""
+
+    result = _execute_query(sql)
+
+    if result.empty:
+        return None
+
+    return result.iloc[0]["metric_value"]
+
+
+def _render_kpis(entry: Any):
+
+    measures = _entry_measures(entry)
+
+    if not measures:
+
+        st.info(
+            "No governed measures are registered "
+            "for this domain."
+        )
+
+        return
+
+    st.markdown(
+        "### Key Metrics"
+    )
+
+    # Maximum four cards in the first row.
+    selected_measures = measures[:4]
+
+    columns = st.columns(
+        len(selected_measures)
+    )
+
+    for column, measure in zip(
+        columns,
+        selected_measures,
+    ):
+
+        try:
+
+            value = _calculate_measure(
+                entry,
+                measure,
+            )
+
+            with column:
+
+                st.metric(
+                    label=_pretty_name(
+                        measure
+                    ),
+                    value=_format_value(
+                        value
+                    ),
+                )
+
+        except Exception as exc:
+
+            with column:
+
+                st.metric(
+                    label=_pretty_name(
+                        measure
+                    ),
+                    value="—",
+                )
+
+                st.caption(
+                    f"Unable to calculate: {exc}"
+                )
+
+
+# =============================================================================
+# DEFAULT BUSINESS ANALYSIS
+# =============================================================================
+
+
+def _run_dimension_measure_analysis(
+    entry: Any,
+    dimension: str,
+    measure: str,
+    limit: int = 15,
+) -> pd.DataFrame:
+
+    metric_view = _metric_view_expression(
+        entry
+    )
+
+    dimension_expression = _dimension_expression(
+        dimension
+    )
+
+    measure_expression = _measure_expression(
+        measure
+    )
+
+    # limit is generated internally, not supplied by the user.
+    limit = max(
+        1,
+        min(
+            int(limit),
+            100,
+        ),
+    )
+
+    sql = f"""
+SELECT
+    {dimension_expression} AS dimension_value,
+    {measure_expression} AS metric_value
+FROM {metric_view}
+GROUP BY
+    {dimension_expression}
+ORDER BY
+    metric_value DESC
+LIMIT {limit}
+"""
+
+    return _execute_query(sql)
+
+
+def _render_default_analysis(entry: Any):
+
+    dimensions = _entry_dimensions(
+        entry
+    )
+
+    measures = _entry_measures(
+        entry
+    )
 
     if not dimensions:
-        st.info("No dimensions are registered for this domain.")
+
+        st.info(
+            "No governed dimensions are registered "
+            "for this domain."
+        )
+
         return
 
     if not measures:
-        st.info("No measures are registered for this domain.")
+
+        st.info(
+            "No governed measures are registered "
+            "for this domain."
+        )
+
         return
 
     dimension = dimensions[0]
+
     measure = measures[0]
 
-    metric_view = _metric_view(entry)
+    st.markdown(
+        "### Automatic Business Analysis"
+    )
 
-    dim_sql = _dimension_name_to_sql(dimension)
-    measure_sql = _metric_name_to_sql(measure)
+    st.caption(
+        f"Analyzing "
+        f"**{_pretty_name(measure)}** "
+        f"by "
+        f"**{_pretty_name(dimension)}**"
+    )
 
-    sql = f"""
-        SELECT
-            {dim_sql} AS dimension_value,
-            {measure_sql} AS metric_value
-        FROM {metric_view}
-        GROUP BY {dim_sql}
-        ORDER BY metric_value DESC
-        LIMIT 15
-    """
+    try:
 
-    result = _query(sql)
+        result = _run_dimension_measure_analysis(
+            entry,
+            dimension,
+            measure,
+            limit=15,
+        )
 
-    if result.empty:
-        st.info("No analytical results are available for this domain.")
+        if result.empty:
+
+            st.info(
+                "No analytical data was returned."
+            )
+
+            return
+
+        chart_data = result.copy()
+
+        chart_data["dimension_value"] = (
+            chart_data[
+                "dimension_value"
+            ]
+            .fillna("Unknown")
+            .astype(str)
+        )
+
+        chart_data = chart_data.set_index(
+            "dimension_value"
+        )
+
+        st.bar_chart(
+            chart_data["metric_value"]
+        )
+
+        with st.expander(
+            "View analytical results"
+        ):
+
+            st.dataframe(
+                result,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    except Exception as exc:
+
+        st.warning(
+            f"Automatic analysis could not be completed: {exc}"
+        )
+
+
+# =============================================================================
+# INTERACTIVE EXPLORATION
+# =============================================================================
+
+
+def _render_explorer(entry: Any):
+
+    dimensions = _entry_dimensions(
+        entry
+    )
+
+    measures = _entry_measures(
+        entry
+    )
+
+    if not dimensions or not measures:
         return
 
-    st.subheader(
-        f"{measure.replace('_', ' ').title()} by "
-        f"{dimension.replace('_', ' ').title()}"
+    st.markdown(
+        "### Explore the Semantic Model"
     )
 
-    st.bar_chart(
-        result.set_index("dimension_value")["metric_value"]
-    )
+    left, right = st.columns(2)
 
-    with st.expander("View underlying result"):
+    with left:
+
+        selected_dimension = st.selectbox(
+            "Dimension",
+            dimensions,
+            key=(
+                "analytics_dimension_"
+                + _entry_domain_name(entry)
+            ),
+            format_func=_pretty_name,
+        )
+
+    with right:
+
+        selected_measure = st.selectbox(
+            "Measure",
+            measures,
+            key=(
+                "analytics_measure_"
+                + _entry_domain_name(entry)
+            ),
+            format_func=_pretty_name,
+        )
+
+    try:
+
+        result = _run_dimension_measure_analysis(
+            entry,
+            selected_dimension,
+            selected_measure,
+            limit=25,
+        )
+
+        if result.empty:
+
+            st.info(
+                "No data returned for this analysis."
+            )
+
+            return
+
+        chart_data = result.copy()
+
+        chart_data["dimension_value"] = (
+            chart_data[
+                "dimension_value"
+            ]
+            .fillna("Unknown")
+            .astype(str)
+        )
+
+        chart_data = chart_data.set_index(
+            "dimension_value"
+        )
+
+        st.bar_chart(
+            chart_data["metric_value"]
+        )
+
         st.dataframe(
             result,
             use_container_width=True,
             hide_index=True,
         )
 
+    except Exception as exc:
 
-def _render_dimension_selector(entry):
-    dimensions = _get_dimensions(entry)
-    measures = _get_measures(entry)
-
-    if not dimensions or not measures:
-        return
-
-    selected_dimension = st.selectbox(
-        "Analyze by",
-        dimensions,
-        key=f"analytics_dimension_{_entry_value(entry, 'domain_name')}",
-    )
-
-    selected_measure = st.selectbox(
-        "Measure",
-        measures,
-        key=f"analytics_measure_{_entry_value(entry, 'domain_name')}",
-    )
-
-    metric_view = _metric_view(entry)
-
-    dimension_sql = _dimension_name_to_sql(selected_dimension)
-    measure_sql = _metric_name_to_sql(selected_measure)
-
-    sql = f"""
-        SELECT
-            {dimension_sql} AS dimension_value,
-            {measure_sql} AS metric_value
-        FROM {metric_view}
-        GROUP BY {dimension_sql}
-        ORDER BY metric_value DESC
-        LIMIT 25
-    """
-
-    result = _query(sql)
-
-    if result.empty:
-        st.info("No data returned for this analysis.")
-        return
-
-    st.bar_chart(
-        result.set_index("dimension_value")["metric_value"]
-    )
-
-    st.dataframe(
-        result,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-def render_domain_dashboard(domain_name: str):
-    """
-    Main public rendering function used by pages/5_Analytics.py.
-
-    Completely metadata-driven:
-        domain → registry → Metric View → measures/dimensions → dashboard
-
-    There is intentionally no domain-specific branching here.
-    """
-    entry = _get_domain_entry(domain_name)
-
-    if entry is None:
         st.error(
-            f"Domain '{domain_name}' is not present in the semantic registry."
+            f"Unable to execute this analysis: {exc}"
         )
-        return
 
-    metric_view = _metric_view(entry)
-    measures = _get_measures(entry)
-    dimensions = _get_dimensions(entry)
+
+# =============================================================================
+# DOMAIN SUMMARY
+# =============================================================================
+
+
+def _render_domain_information(entry: Any):
+
+    domain_name = _entry_domain_name(
+        entry
+    )
+
+    metric_view = _entry_metric_view(
+        entry
+    )
+
+    fact_table = _entry_get(
+        entry,
+        "fact_table",
+        "—",
+    )
+
+    row_count = _entry_get(
+        entry,
+        "row_count",
+        None,
+    )
+
+    dimensions = _entry_dimensions(
+        entry
+    )
+
+    measures = _entry_measures(
+        entry
+    )
+
+    st.markdown(
+        "### Governed Semantic Model"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+
+        st.metric(
+            "Domain",
+            domain_name,
+        )
+
+    with c2:
+
+        st.metric(
+            "Fact Table",
+            str(fact_table),
+        )
+
+    with c3:
+
+        st.metric(
+            "Dimensions",
+            len(dimensions),
+        )
+
+    with c4:
+
+        if row_count is None:
+
+            display_rows = "—"
+
+        else:
+
+            display_rows = f"{int(row_count):,}"
+
+        st.metric(
+            "Source Rows",
+            display_rows,
+        )
 
     st.caption(
-        f"Governed source: `{metric_view}`"
+        f"Metric View: `{metric_view}`"
     )
 
-    st.markdown("### Key Metrics")
+
+# =============================================================================
+# MAIN PUBLIC FUNCTION
+# =============================================================================
+
+
+def render_domain_dashboard(
+    domain: Any,
+):
+    """
+    Main entry point used by pages/5_Analytics.py.
+
+    IMPORTANT:
+
+    `domain` can be either:
+
+        "Healthcare"
+
+    OR:
+
+        RegistryEntry(...)
+
+    OR:
+
+        {"domain_name": "Healthcare", ...}
+
+    This is the specific bug fixed from the previous implementation.
+    """
+
+    # -------------------------------------------------------------------------
+    # Resolve the RegistryEntry.
+    # -------------------------------------------------------------------------
+
+    entry = _resolve_domain_entry(
+        domain
+    )
+
+    if entry is None:
+
+        if isinstance(
+            domain,
+            str,
+        ):
+
+            domain_label = domain
+
+        else:
+
+            domain_label = _entry_domain_name(
+                domain
+            )
+
+        st.error(
+            f"Domain '{domain_label}' "
+            "is not present in the semantic registry."
+        )
+
+        return
+
+    # -------------------------------------------------------------------------
+    # Validate the Metric View.
+    # -------------------------------------------------------------------------
 
     try:
-        _render_kpi_cards(entry)
-    except Exception as exc:
-        st.warning(
-            f"KPI calculation could not be completed: {exc}"
+
+        metric_view = _entry_metric_view(
+            entry
         )
+
+        if not metric_view:
+
+            raise ValueError(
+                "Registry entry does not contain "
+                "a Metric View."
+            )
+
+    except Exception as exc:
+
+        st.error(
+            f"Invalid semantic registry entry: {exc}"
+        )
+
+        return
+
+    # -------------------------------------------------------------------------
+    # Header.
+    # -------------------------------------------------------------------------
+
+    domain_name = _entry_domain_name(
+        entry
+    )
+
+    st.markdown(
+        f"## {domain_name} Analytics"
+    )
+
+    st.caption(
+        "Metadata-driven analytics generated "
+        "from the governed semantic model."
+    )
+
+    # -------------------------------------------------------------------------
+    # Governed model information.
+    # -------------------------------------------------------------------------
+
+    _render_domain_information(
+        entry
+    )
 
     st.divider()
 
-    st.markdown("### Semantic Analytics")
+    # -------------------------------------------------------------------------
+    # KPI cards.
+    # -------------------------------------------------------------------------
 
-    try:
-        _render_dimension_analysis(entry)
-    except Exception as exc:
-        st.warning(
-            f"Automatic analysis could not be completed: {exc}"
-        )
+    _render_kpis(
+        entry
+    )
 
     st.divider()
 
-    st.markdown("### Explore the Semantic Model")
+    # -------------------------------------------------------------------------
+    # Automatic business analysis.
+    # -------------------------------------------------------------------------
 
-    if dimensions:
-        st.write(
-            "**Dimensions:** "
-            + ", ".join(
-                d.replace("_", " ")
-                for d in dimensions
-            )
-        )
+    _render_default_analysis(
+        entry
+    )
 
-    if measures:
-        st.write(
-            "**Measures:** "
-            + ", ".join(
-                m.replace("_", " ")
-                for m in measures
-            )
-        )
+    st.divider()
 
-    with st.expander("Custom dimension / measure analysis"):
-        try:
-            _render_dimension_selector(entry)
-        except Exception as exc:
-            st.warning(
-                f"Custom analysis could not be completed: {exc}"
-            )
+    # -------------------------------------------------------------------------
+    # Interactive exploration.
+    # -------------------------------------------------------------------------
+
+    _render_explorer(
+        entry
+    )
