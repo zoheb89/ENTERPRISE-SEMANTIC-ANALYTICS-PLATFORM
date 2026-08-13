@@ -517,11 +517,48 @@ STRICT GOVERNANCE RULES:
 17. If the question cannot be answered from
     the semantic model, do not invent an answer.
 
-18. Return ONLY valid JSON.
+18. Every declared Metric View measure MUST be evaluated
+    with the Databricks MEASURE() function.
 
-19. Do NOT use Markdown code fences.
+    CORRECT:
+    SELECT MEASURE(avg_heart_rate)
+    FROM <governed_metric_view>
 
-20. Do NOT put text before or after the JSON.
+    CORRECT:
+    SELECT doctors_doctor_name,
+           MEASURE(avg_heart_rate) AS avg_heart_rate
+    FROM <governed_metric_view>
+    GROUP BY ALL
+
+    WRONG:
+    SELECT avg_heart_rate
+    FROM <governed_metric_view>
+
+    WRONG:
+    SELECT AVG(avg_heart_rate)
+    FROM <governed_metric_view>
+
+    WRONG:
+    SELECT SUM(avg_heart_rate)
+    FROM <governed_metric_view>
+
+19. Do not wrap a Metric View measure in
+    AVG(), SUM(), COUNT(), MIN(), or MAX().
+    The Metric View measure definition already owns
+    its aggregation semantics.
+
+20. If a measure is selected, reference it as:
+    MEASURE(<measure_name>)
+
+21. If dimensions and measures are selected together,
+    use GROUP BY ALL unless the query is otherwise
+    invalid for Databricks.
+
+22. Return ONLY valid JSON.
+
+23. Do NOT use Markdown code fences.
+
+24. Do NOT put text before or after the JSON.
 
 Required response:
 
@@ -726,6 +763,60 @@ def _validate_sql(
             "The generated SQL did not use "
             "the governed Metric View."
         )
+
+
+    # -------------------------------------------------------------------------
+    # Metric View measure validation
+    # -------------------------------------------------------------------------
+    #
+    # Databricks Metric Views require measure evaluations
+    # to use MEASURE(<measure_name>). This is enforced
+    # deterministically rather than relying only on the LLM.
+    # -------------------------------------------------------------------------
+
+    declared_measures = [
+        str(measure).strip()
+        for measure in (entry.measures or [])
+        if str(measure).strip()
+    ]
+
+    for measure in declared_measures:
+
+        bare_measure_pattern = re.compile(
+            rf"(?<![A-Za-z0-9_]){re.escape(measure)}(?![A-Za-z0-9_])",
+            flags=re.IGNORECASE,
+        )
+
+        if not bare_measure_pattern.search(sql):
+            continue
+
+        measure_function_pattern = re.compile(
+            rf"\bMEASURE\s*\(\s*{re.escape(measure)}\s*\)",
+            flags=re.IGNORECASE,
+        )
+
+        if not measure_function_pattern.search(sql):
+            raise ValueError(
+                f"Metric View measure '{measure}' must be "
+                "evaluated with MEASURE(). "
+                f"Use MEASURE({measure}) instead of referencing "
+                f"{measure} directly or wrapping it in another "
+                "aggregation function."
+            )
+
+        reaggregation_pattern = re.compile(
+            rf"\b(?:AVG|SUM|COUNT|MIN|MAX)\s*\(\s*"
+            rf"(?:MEASURE\s*\(\s*)?"
+            rf"{re.escape(measure)}"
+            rf"\s*\)?\s*\)",
+            flags=re.IGNORECASE,
+        )
+
+        if reaggregation_pattern.search(sql):
+            raise ValueError(
+                f"Metric View measure '{measure}' must not be "
+                "re-aggregated with AVG/SUM/COUNT/MIN/MAX."
+            )
 
 
     # -------------------------------------------------------------------------
