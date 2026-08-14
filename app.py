@@ -27,15 +27,30 @@ pg = st.navigation(
     }
 )
 
-# INVENT startup behavior:
-# A brand-new browser/session load always starts at Home, even if the browser
-# restores a deep-link URL such as /Business_Model. Once the user has entered
-# the application, normal Streamlit navigation is preserved.
+# ---------------------------------------------------------------------------
+# INVENT STARTUP ROUTING
+# ---------------------------------------------------------------------------
+# Streamlit can restore the last deep-linked pathname (for example
+# /Business_Model) after a browser refresh or after a server/app restart.
+# `default=True` alone does not override an existing pathname.
 #
-# This is intentionally session-scoped: clicking between INVENT pages does not
-# bounce the user back to Home, while a fresh/rebooted session gets the Home page.
-if "_invent_session_booted" not in st.session_state:
-    st.session_state["_invent_session_booted"] = True
+# Use a process/app-instance token from cache_resource:
+#   * same app instance + normal navigation -> stay on the selected page
+#   * new browser session -> go to Home
+#   * app/server reboot -> token changes -> go to Home
+#
+# This avoids the previous session-only flag, which could survive a reconnect
+# and therefore fail to return users to the INVENT Home page after reboot.
+@st.cache_resource
+def _invent_app_instance_id() -> str:
+    import uuid
+    return str(uuid.uuid4())
+
+_app_instance_id = _invent_app_instance_id()
+
+_previous_instance = st.session_state.get("_invent_app_instance_id")
+if _previous_instance != _app_instance_id:
+    st.session_state["_invent_app_instance_id"] = _app_instance_id
     st.switch_page("pages/0_Home.py")
 
 pg.run()
