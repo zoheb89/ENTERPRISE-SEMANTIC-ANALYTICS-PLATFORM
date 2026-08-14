@@ -299,10 +299,17 @@ with st.container(border=True):
 
                     st.session_state.last_published_domain = model.domain_name
                     st.session_state.security_actions = result["security_actions"]
+                    st.session_state.setdefault("invent_audit", []).append({
+                        "event": "Domain published",
+                        "domain": model.domain_name,
+                        "detail": f"{len(model.facts)} fact tables → one canonical Metric View {result['metric_view']}; Genie Agent: {result.get('genie_space_id') or 'not connected'}",
+                    })
 
                     st.success(f"**{model.domain_name}** published successfully — now live in Analytics, no redeploy needed.")
                     st.markdown(f"**Catalog:** `{result['catalog']}`  \n**Schema:** `{result['schema']}`  \n**Metric View:** `{result['metric_view']}`  \n**Fact Tables:** `{len(model.facts)}`")
 
+                    st.markdown("**Governed measures in canonical Metric View:**")
+                    st.caption(" · ".join(result.get("measures", [])))
                     st.markdown("**Publication status:**")
 
                     genie_actions = [

@@ -1,374 +1,277 @@
+"""C INVENT production publish engine.
+
+One domain publish creates:
+- one schema
+- one Delta table for every detected source table
+- one canonical domain Metric View: mv_domain
+- one domain-scoped Genie Agent
+
+All detected facts remain real Delta tables.  The canonical Metric View is
+built over a generated union source so measures from every fact are available
+through the single governed analytics entry point without unsafe fact-to-fact
+fan-out.
 """
-Enterprise Semantic Analytics Platform — Publish Orchestration.
-
-Ties semantic_engine.py (analysis) and security_fabric.py (grants +
-Genie) together into one end-to-end publish operation: write Delta
-tables, create a real Unity Catalog Metric View, grant the reader
-principal access, and register the new asset with the shared Genie
-space — all in one call, no manual Databricks step in between.
-
-Schema isolation is enforced structurally: every domain gets its own
-schema in the dedicated Invent catalog, name-validated before any write
-happens, so two domains uploaded back-to-back can never collide.
-"""
-
 from __future__ import annotations
-
 import re
-
+from collections import deque
 import pandas as pd
 import streamlit as st
 from databricks import sql as dbsql
-
 import security_fabric as security
 from semantic_engine import SemanticModel, _looks_like_id_column, _looks_non_additive, _looks_like_rating_or_category_column
 
 
 def _sanitize_identifier(name: str) -> str:
-    n = re.sub(r'\.(csv|xlsx?)$', '', name, flags=re.IGNORECASE)
+    n = re.sub(r'\.(csv|xlsx?|xls|json|parquet|xml)$', '', name, flags=re.I)
     n = re.sub(r'[^a-zA-Z0-9_]', '_', n).lower()
     n = re.sub(r'_+', '_', n).strip('_')
-    return n or "table"
+    return n or 'table'
 
 
 def _validate_domain_schema_name(domain_name: str) -> str:
-    safe = _sanitize_identifier(domain_name)
-    return f"domain_{safe}"
+    return f"domain_{_sanitize_identifier(domain_name)}"
 
 
 def get_sql_connection():
-    """Uses PAT auth (see security_fabric._pat_config for why) — the
-    catalog= parameter is required here too: without it the connector
-    defaults to the workspace's own default catalog rather than the
-    one configured, a real bug traced and fixed earlier in this
-    project's history."""
-    hostname = st.secrets["DATABRICKS_HOST"].replace("https://", "").replace("http://", "")
+    hostname = st.secrets['DATABRICKS_HOST'].replace('https://','').replace('http://','')
     cfg = security._pat_config()
     return dbsql.connect(
         server_hostname=hostname,
         http_path=f"/sql/1.0/warehouses/{st.secrets['DATABRICKS_WAREHOUSE_ID']}",
         credentials_provider=lambda: cfg.authenticate,
-        catalog=st.secrets["DATABRICKS_CATALOG"],
+        catalog=st.secrets['DATABRICKS_CATALOG'],
     )
 
 
 def _infer_sql_type(series: pd.Series) -> str:
-    dtype = str(series.dtype)
-    if "int" in dtype:
-        return "BIGINT"
-    if "float" in dtype:
-        return "DOUBLE"
-    if "bool" in dtype:
-        return "BOOLEAN"
-    if "datetime" in dtype:
-        return "TIMESTAMP"
-    return "STRING"
+    dtype = str(series.dtype).lower()
+    if 'datetime' in dtype:
+        return 'TIMESTAMP'
+    if 'bool' in dtype:
+        return 'BOOLEAN'
+    if 'int' in dtype:
+        return 'BIGINT'
+    if 'float' in dtype:
+        return 'DOUBLE'
+    return 'STRING'
 
 
 def _write_dataframe_as_table(cursor, df: pd.DataFrame, full_table_name: str, max_rows_inline: int = 2000):
     if len(df) > max_rows_inline:
-        raise ValueError(
-            f"{full_table_name}: {len(df)} rows exceeds the {max_rows_inline}-row inline publish limit "
-            f"for this demo build. Production-scale uploads need a Volume + COPY INTO path instead."
-        )
-    cols_ddl = ", ".join(f"`{c}` {_infer_sql_type(df[c])}" for c in df.columns)
+        raise ValueError(f"{full_table_name}: {len(df)} rows exceeds the inline publish limit of {max_rows_inline}. Use a Volume/COPY INTO path for production-scale ingestion.")
+    cols_ddl = ', '.join(f"`{c}` {_infer_sql_type(df[c])}" for c in df.columns)
     cursor.execute(f"DROP TABLE IF EXISTS {full_table_name}")
     cursor.execute(f"CREATE TABLE {full_table_name} ({cols_ddl}) USING DELTA")
     if len(df) == 0:
         return
-    col_names = ", ".join(f"`{c}`" for c in df.columns)
-    values_rows = []
+    col_names = ', '.join(f"`{c}`" for c in df.columns)
+    rows = []
     for _, row in df.iterrows():
-        vals = []
+        vals=[]
         for v in row:
-            if pd.isna(v):
-                vals.append("NULL")
-            elif isinstance(v, (int, float)):
-                vals.append(str(v))
-            else:
-                vals.append("'" + str(v).replace("'", "''") + "'")
-        values_rows.append(f"({', '.join(vals)})")
-    cursor.execute(f"INSERT INTO {full_table_name} ({col_names}) VALUES {', '.join(values_rows)}")
+            if pd.isna(v): vals.append('NULL')
+            elif isinstance(v, bool): vals.append('TRUE' if v else 'FALSE')
+            elif isinstance(v, (int,float)): vals.append(str(v))
+            else: vals.append("'"+str(v).replace("'","''")+"'")
+        rows.append('('+', '.join(vals)+')')
+    cursor.execute(f"INSERT INTO {full_table_name} ({col_names}) VALUES {', '.join(rows)}")
 
 
-def _model_to_metric_view_yaml(model: SemanticModel, fact_table: str, schema: str, catalog: str) -> tuple[str, list[str], list[str]]:
-    """Returns (yaml_text, real_measure_names, real_dimension_names).
-    Both name lists are the single source of truth for what actually
-    exists in the published view — callers (the registry writer) must
-    use THESE lists, not re-derive names independently, to avoid drift.
-    See publish_domain().
+def _dtype_sql(profile, col):
+    for c in profile.columns:
+        if c.name == col:
+            return _dtype_to_sql(c.dtype)
+    return 'STRING'
 
-    Dimension fields are aliased ({alias}_{column}, e.g.
-    department_department_name) to avoid collisions when two joined
-    dimensions share a column name. An earlier version of the registry
-    writer (pages/4_Business_Model.py) stored the raw, un-aliased source
-    column name instead of this real aliased name -- causing
-    SELECT {dimension} in analytics_engine.py to reference a column that
-    never existed in the Metric View, and Databricks correctly rejected
-    the query at runtime. Fixed the same way the earlier measure-name
-    drift bug was: return the real names from here, stop re-deriving
-    them elsewhere."""
-    fact_profile = model.tables[fact_table]
-    fact_safe = _sanitize_identifier(fact_table)
-    joins_yaml, fields_yaml, measures_yaml = [], [], []
-    measure_names: list[str] = []
-    dimension_names: list[str] = []
 
-    related = [
-        r for r in model.relationships
-        if r.from_table == fact_table
-        and r.to_table not in model.facts
-    ]
-    for rel in related:
-        alias = _sanitize_identifier(rel.to_table)
-        joins_yaml.append(
-            f"  - name: {alias}\n    source: {catalog}.{schema}.{alias}\n"
-            f"    on: source.{rel.from_column} = {alias}.{rel.to_column}\n    cardinality: many_to_one"
-        )
-        dim_profile = model.tables[rel.to_table]
-        for c in dim_profile.columns:
-            if c.name == rel.to_column or "int" in c.dtype or "float" in c.dtype:
-                continue
-            field_name = f"{alias}_{c.name}"
-            fields_yaml.append(f"  - name: {field_name}\n    expr: {alias}.{c.name}")
-            dimension_names.append(field_name)
+def _dtype_to_sql(dtype: str) -> str:
+    d = dtype.lower()
+    if 'datetime' in d: return 'TIMESTAMP'
+    if 'bool' in d: return 'BOOLEAN'
+    if 'int' in d: return 'BIGINT'
+    if 'float' in d or 'double' in d: return 'DOUBLE'
+    if 'date' in d: return 'DATE'
+    return 'STRING'
 
-    for c in fact_profile.columns:
-        if any(r.from_column == c.name for r in related):
+
+def _relationship_path(model: SemanticModel, start: str, target: str):
+    """Find a safe FK->PK path from a fact to a dimension.
+
+    Only N:1 edges are traversed. Dimensions are terminal nodes. This lets
+    booking_services -> bookings -> customers work without joining two facts
+    into the metric aggregation directly.
+    """
+    if start == target:
+        return []
+    adjacency={t:[] for t in model.tables}
+    for r in model.relationships:
+        if r.is_many_to_many:
             continue
-        is_id = _looks_like_id_column(c.name, c.dtype)
-        is_rating = _looks_like_rating_or_category_column(c, fact_profile.row_count)
-        is_non_additive = _looks_non_additive(c.name)
-        if ("int" in c.dtype or "float" in c.dtype) and not is_id and not is_rating:
-            if is_non_additive:
-                # AVG(), not SUM() -- summing a rate/measurement column
-                # (heart_rate, conversion_rate) is meaningless. Matches
-                # generate_metrics()'s AVG() generation for the same
-                # column type, so the registry's measure list and the
-                # real published measure stay in sync (same discipline
-                # as the earlier total_/count naming fix).
-                measure_name = f"avg_{c.name}"
-                measures_yaml.append(f"  - name: {measure_name}\n    expr: AVG(source.{c.name})")
+        adjacency.setdefault(r.from_table, []).append(r)
+    q=deque([(start,[])])
+    seen={start}
+    while q:
+        node,path=q.popleft()
+        for r in adjacency.get(node,[]):
+            if r.to_table in seen: continue
+            np=path+[r]
+            if r.to_table == target:
+                return np
+            # Never walk outward from a dimension; dimensions are leaves.
+            if r.to_table in model.dimensions:
+                continue
+            seen.add(r.to_table)
+            q.append((r.to_table,np))
+    return None
+
+
+def _metric_names_for_fact(model, fact):
+    profile=model.tables[fact]
+    related_fk={r.from_column for r in model.relationships if r.from_table==fact}
+    measures=[]
+    for c in profile.columns:
+        if c.name in related_fk or c.null_pct>=100: continue
+        is_id=_looks_like_id_column(c.name,c.dtype)
+        is_rating=_looks_like_rating_or_category_column(c,profile.row_count)
+        if ('int' in c.dtype.lower() or 'float' in c.dtype.lower()) and not is_id and not is_rating:
+            agg='AVG' if _looks_non_additive(c.name) else 'SUM'
+            base=f"{agg.lower()}_{c.name}" if agg=='AVG' else f"total_{c.name}"
+            measures.append((base,c.name,agg))
+    measures.append((f"{_sanitize_identifier(fact)}_count",None,'COUNT'))
+    return measures
+
+
+def _build_domain_source_sql(model: SemanticModel, catalog: str, schema: str, primary_fact: str):
+    """Build one UNION ALL source relation with all facts and conformed dims.
+
+    Every row carries fact_type and a one-hot row counter. Fact measures are
+    kept separate, preventing cross-fact aggregation errors while exposing all
+    fact metrics through one canonical Metric View.
+    """
+    facts=list(model.facts)
+    dims=list(model.dimensions)
+    fact_cols=[]
+    for f in facts:
+        for c in model.tables[f].columns:
+            fact_cols.append((f,c.name,_dtype_sql(model.tables[f],c.name)))
+    dim_cols=[]
+    for d in dims:
+        for c in model.tables[d].columns:
+            dim_cols.append((d,c.name,_dtype_sql(model.tables[d],c.name)))
+
+    branches=[]
+    for fact in facts:
+        f_alias='f0'
+        joins=[]
+        aliases={fact:f_alias}
+        paths={}
+        for d in dims:
+            path=_relationship_path(model,fact,d)
+            if path is None: continue
+            cur=fact
+            for r in path:
+                if r.to_table in aliases: continue
+                alias=f"j{len(aliases)}"
+                aliases[r.to_table]=alias
+                joins.append(f"LEFT JOIN {catalog}.{schema}.{_sanitize_identifier(r.to_table)} {alias} ON {aliases[cur]}.`{r.from_column}` = {alias}.`{r.to_column}`")
+                cur=r.to_table
+            paths[d]=aliases[d]
+        select=[f"'{_sanitize_identifier(fact)}' AS fact_type"]
+        for f,c,typ in fact_cols:
+            alias=aliases.get(f)
+            out=f"f_{_sanitize_identifier(f)}_{_sanitize_identifier(c)}"
+            if alias:
+                select.append(f"CAST({alias}.`{c}` AS {typ}) AS `{out}`")
             else:
-                measure_name = f"total_{c.name}"
-                measures_yaml.append(f"  - name: {measure_name}\n    expr: SUM(source.{c.name})")
-            measure_names.append(measure_name)
-        elif not is_id:
-            fields_yaml.append(f"  - name: {c.name}\n    expr: source.{c.name}")
-
-    # A COUNT(*) measure is always added, matching one generate_metrics()
-    # always appends per fact table in semantic_engine.py. Both this
-    # measure list and that BusinessMetric list feed the registry — this
-    # function's return value is now what the registry actually uses.
-    count_measure_name = f"{fact_safe}_count"
-    measures_yaml.append(f"  - name: {count_measure_name}\n    expr: COUNT(*)")
-    measure_names.append(count_measure_name)
-
-    yaml_text = f"""version: 1.1
-source: {catalog}.{schema}.{fact_safe}
-comment: "Published by Enterprise Semantic Analytics Platform — domain: {model.domain_name}"
-
-joins:
-{chr(10).join(joins_yaml) if joins_yaml else "  []"}
-
-fields:
-{chr(10).join(fields_yaml) if fields_yaml else "  []"}
-
-measures:
-{chr(10).join(measures_yaml) if measures_yaml else "  []"}
-"""
-    return yaml_text, measure_names, dimension_names
+                select.append(f"CAST(NULL AS {typ}) AS `{out}`")
+        for d,c,typ in dim_cols:
+            out=f"d_{_sanitize_identifier(d)}_{_sanitize_identifier(c)}"
+            alias=paths.get(d)
+            if alias:
+                select.append(f"CAST({alias}.`{c}` AS {typ}) AS `{out}`")
+            else:
+                select.append(f"CAST(NULL AS {typ}) AS `{out}`")
+        for f in facts:
+            counter=f"__row_count_{_sanitize_identifier(f)}"
+            select.append(f"CAST({'1' if f==fact else '0'} AS BIGINT) AS `{counter}`")
+        branches.append("SELECT\n  "+",\n  ".join(select)+f"\nFROM {catalog}.{schema}.{_sanitize_identifier(fact)} {f_alias}\n"+"\n".join(joins))
+    return "\nUNION ALL\n".join(branches)
 
 
+def _build_metric_yaml(model, catalog, schema, source_name, primary_fact):
+    fields=[]
+    measures=[]
+    dimensions=[]
+    for d in model.dimensions:
+        for c in model.tables[d].columns:
+            name=f"{_sanitize_identifier(d)}_{_sanitize_identifier(c.name)}"
+            source=f"d_{_sanitize_identifier(d)}_{_sanitize_identifier(c.name)}"
+            fields.append(f"  - name: {name}\n    expr: source.`{source}`")
+            dimensions.append(name)
+    fields.append("  - name: fact_type\n    expr: source.fact_type")
 
-def publish_domain(
-    model: SemanticModel,
-    fact_table: str,
-    genie_space_id: str | None = None,
-    reader_principal: str | None = None,
-) -> dict:
-    """
-    Production publish pipeline for one metadata-driven domain.
+    for fact in model.facts:
+        prefix=_sanitize_identifier(fact)
+        for idx,(name,col,agg) in enumerate(_metric_names_for_fact(model,fact)):
+            if col is None:
+                source=f"__row_count_{prefix}"
+                measures.append(f"  - name: {name}\n    expr: SUM(source.`{source}`)")
+            else:
+                # Preserve the primary fact's clean names; namespace other facts.
+                public=name if fact==primary_fact else f"{prefix}_{name}"
+                source=f"f_{prefix}_{_sanitize_identifier(col)}"
+                measures.append(f"  - name: {public}\n    expr: {agg}(source.`{source}`)")
+    yaml=f"""version: 1.1\nsource: {catalog}.{schema}.{source_name}\ncomment: \"C INVENT canonical domain Metric View — {model.domain_name}; all detected facts\"\n\njoins:\n  []\n\nfields:\n{chr(10).join(fields) if fields else '  []'}\n\nmeasures:\n{chr(10).join(measures) if measures else '  []'}\n"""
+    measure_names=[]
+    for fact in model.facts:
+        for name,col,agg in _metric_names_for_fact(model,fact):
+            measure_names.append(name if fact==primary_fact else f"{_sanitize_identifier(fact)}_{name}" if col is not None else name)
+    return yaml,measure_names,dimensions
 
-    Creates:
-      * one isolated schema
-      * one Delta table per uploaded asset
-      * one Metric View per detected fact table
-      * one domain Genie Agent (existing mapped ID or automatic creation)
-      * registry-ready metadata for the selected primary fact
 
-    The selected fact remains the primary analytics entry point, while all
-    detected facts are published so the domain semantic model is complete.
-    """
-
-    catalog = st.secrets["DATABRICKS_CATALOG"]
-    schema = _validate_domain_schema_name(
-        model.domain_name
-    )
-
-    if fact_table not in model.facts:
-        raise ValueError(
-            f"'{fact_table}' is not a governed fact table."
-        )
-
-    security_actions = []
-    created_tables = []
-    metric_views = {}
-
+def publish_domain(model: SemanticModel, fact_table: str, genie_space_id: str|None=None, reader_principal: str|None=None) -> dict:
+    catalog=st.secrets['DATABRICKS_CATALOG']
+    schema=_validate_domain_schema_name(model.domain_name)
+    if fact_table not in model.facts: raise ValueError(f"'{fact_table}' is not a governed fact table.")
+    created=[]
+    source_name='_invent_mv_domain_source'
+    canonical=f"{catalog}.{schema}.mv_domain"
+    source_full=f"{catalog}.{schema}.{source_name}"
     with get_sql_connection() as conn:
         with conn.cursor() as cur:
-
-            cur.execute(
-                f"CREATE SCHEMA IF NOT EXISTS "
-                f"{catalog}.{schema}"
-            )
-
-            # ---------------------------------------------------------
-            # Publish every uploaded table as a real Delta table.
-            # ---------------------------------------------------------
-            for table_name, profile in model.tables.items():
-
-                safe_name = _sanitize_identifier(
-                    table_name
-                )
-
-                full_name = (
-                    f"{catalog}.{schema}.{safe_name}"
-                )
-
-                _write_dataframe_as_table(
-                    cur,
-                    profile.df,
-                    full_name,
-                )
-
-                created_tables.append(
-                    full_name
-                )
-
-            # ---------------------------------------------------------
-            # Publish ONE governed Metric View per DOMAIN.
-            # ---------------------------------------------------------
-            # Multiple detected facts remain real Delta tables, but the
-            # application exposes exactly one canonical Metric View for a
-            # domain. This prevents mv_tickets / mv_usage / mv_devices etc.
-            # from becoming competing Genie sources on every publish.
-            primary_fact = fact_table
-            canonical_view_name = (
-                f"{catalog}.{schema}.mv_domain"
-            )
-
-            # Remove legacy per-fact Metric Views created by older INVENT
-            # releases. Only INVENT-created mv_<fact> objects are touched;
-            # the uploaded Delta tables are never removed.
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
+            for table_name,profile in model.tables.items():
+                full=f"{catalog}.{schema}.{_sanitize_identifier(table_name)}"
+                _write_dataframe_as_table(cur,profile.df,full)
+                created.append(full)
+            source_sql=_build_domain_source_sql(model,catalog,schema,fact_table)
+            cur.execute(f"CREATE OR REPLACE VIEW {source_full} AS {source_sql}")
+            yaml,measure_names,dimension_names=_build_metric_yaml(model,catalog,schema,source_name,fact_table)
+            cur.execute(f"CREATE OR REPLACE VIEW {canonical} WITH METRICS LANGUAGE YAML AS $${yaml}$$")
+            # Remove legacy per-fact Metric Views only. Never drop source Delta tables.
             for legacy_fact in model.facts:
-                legacy_name = (
-                    f"{catalog}.{schema}."
-                    f"mv_{_sanitize_identifier(legacy_fact)}"
-                )
-                if legacy_name != canonical_view_name:
-                    try:
-                        cur.execute(f"DROP VIEW IF EXISTS {legacy_name}")
-                    except Exception:
-                        pass
-
-            (
-                yaml_body,
-                measure_names,
-                dimension_names,
-            ) = _model_to_metric_view_yaml(
-                model,
-                primary_fact,
-                schema,
-                catalog,
-            )
-
-            cur.execute(
-                f"""
-                CREATE OR REPLACE VIEW
-                {canonical_view_name}
-                WITH METRICS
-                LANGUAGE YAML
-                AS $${yaml_body}$$
-                """
-            )
-
-            metric_views[primary_fact] = {
-                "metric_view": canonical_view_name,
-                "measures": measure_names,
-                "dimensions": dimension_names,
-            }
-
-    # -------------------------------------------------------------
-    # Optional reader permissions.
-    # -------------------------------------------------------------
+                legacy=f"{catalog}.{schema}.mv_{_sanitize_identifier(legacy_fact)}"
+                if legacy != canonical:
+                    try: cur.execute(f"DROP VIEW IF EXISTS {legacy}")
+                    except Exception: pass
+    actions=[]
     if reader_principal:
-        security_actions.append(
-            security.grant_select_on_schema(
-                f"{catalog}.{schema}",
-                reader_principal,
-            )
-        )
-
-    # -------------------------------------------------------------
-    # Genie — domain-scoped and automatic.
-    #
-    # Preferred configuration:
-    #   [GENIE_SPACES]
-    #   Retail = "..."
-    #
-    # Legacy fallback:
-    #   GENIE_SPACE_ID = "..."
-    #
-    # If neither is present and GENIE_AUTO_CREATE=true, INVENT creates
-    # a Genie Agent for this domain.
-    # -------------------------------------------------------------
-
-    resolved_space_id = (
-        str(genie_space_id).strip()
-        if genie_space_id
-        else security.genie_space_id_from_secrets(
-            model.domain_name
-        )
-    )
-
-    # -------------------------------------------------------------
-    # One domain = one Genie Agent source.
-    # -------------------------------------------------------------
-    primary_mv = metric_views[primary_fact]
-    sample_questions = [
-        f"What are the key KPIs for {model.domain_name}?",
-        (
-            f"Show {primary_mv['measures'][0]} by the main business dimensions."
-            if primary_mv["measures"]
-            else f"Show the main trends for {model.domain_name}."
-        ),
-    ]
-
-    resolved_space_id, action = security.register_table_with_genie_space(
-        resolved_space_id,
-        table_full_name=f"{catalog}.{schema}.{_sanitize_identifier(primary_fact)}",
-        metric_view_full_name=primary_mv["metric_view"],
+        actions.append(security.grant_select_on_schema(f"{catalog}.{schema}",reader_principal))
+    primary=next((m for m in measure_names if m), None)
+    questions=[f"What are the key KPIs for {model.domain_name}?", f"Show {primary or 'the main KPI'} by the main business dimensions."]
+    resolved,action=security.register_table_with_genie_space(
+        genie_space_id,
+        table_full_name=f"{catalog}.{schema}.{_sanitize_identifier(fact_table)}",
+        metric_view_full_name=canonical,
         domain_name=model.domain_name,
-        measures=primary_mv["measures"],
-        dimensions=primary_mv["dimensions"],
-        sample_questions=sample_questions,
+        measures=measure_names,
+        dimensions=dimension_names,
+        sample_questions=questions,
     )
-
-    security_actions.append(action)
-
-    primary = metric_views[
-        fact_table
-    ]
-
+    actions.append(action)
     return {
-        "catalog": catalog,
-        "schema": schema,
-        "tables_created": created_tables,
-        "metric_view": primary["metric_view"],
-        "metric_views": metric_views,
-        "measures": primary["measures"],
-        "dimensions": primary["dimensions"],
-        "genie_space_id": resolved_space_id,
-        "security_actions": security_actions,
+        'catalog':catalog,'schema':schema,'tables_created':created,
+        'metric_view':canonical,'metric_views':{f:{'metric_view':canonical,'measures':measure_names,'dimensions':dimension_names} for f in model.facts},
+        'measures':measure_names,'dimensions':dimension_names,'fact_tables':list(model.facts),
+        'genie_space_id':resolved,'security_actions':actions,'source_view':source_full,
     }

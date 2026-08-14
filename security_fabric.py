@@ -579,9 +579,9 @@ def _update_existing_genie_agent(
             "serialized_space": updated_serialized,
         }
 
-        if current.get("etag"):
-            payload["etag"] = current["etag"]
-
+        # Do not send a stale export etag. Genie UpdateSpace can return HTTP
+        # 409 when the Agent was edited in Catalog/Genie after the GET. The
+        # API explicitly supports omitting etag to skip conflict detection.
         resp = requests.patch(
             _genie_url(space_id),
             headers=_genie_headers(),
@@ -589,6 +589,16 @@ def _update_existing_genie_agent(
             timeout=30,
         )
 
+        if resp.status_code == 409:
+            # One safe retry without conflict metadata. The update is still
+            # scoped to the single canonical INVENT Metric View.
+            payload.pop("etag", None)
+            resp = requests.patch(
+                _genie_url(space_id),
+                headers=_genie_headers(),
+                json=payload,
+                timeout=30,
+            )
         resp.raise_for_status()
 
         return SecurityAction(
@@ -810,13 +820,6 @@ def register_table_with_genie_space(
     # First recover the deterministic domain agent. This prevents every
     # publish from creating another INVENT — <domain> Agent when an older
     # valid domain agent already exists.
-    existing_domain_space = _find_existing_genie_agent(domain_name or "domain")
-    if existing_domain_space:
-        space_id = existing_domain_space
-
-    # Always reuse the deterministic domain Agent when one exists. This is
-    # the idempotency guard that prevents repeated publishes from creating
-    # duplicate INVENT Agents.
     existing_domain_space = _find_existing_genie_agent(domain_name or "domain")
     if existing_domain_space:
         space_id = existing_domain_space
