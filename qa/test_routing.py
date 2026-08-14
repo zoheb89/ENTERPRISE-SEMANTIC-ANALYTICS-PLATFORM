@@ -35,4 +35,4 @@ assert 'demo_domains = available_demo_domains()' in onboarding
 assert 'st.session_state["onboarding_sample_domain"] = demo_domains[0]' in onboarding
 assert 'st.session_state.onboarding_sample_domain = "Healthcare"' not in onboarding
 
-print("INVENT v4.8 ROUTING QA: PASS")
+print("INVENT v4.9 ROUTING/UI QA: PASS")
