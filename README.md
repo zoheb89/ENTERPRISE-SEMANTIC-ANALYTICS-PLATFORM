@@ -341,7 +341,7 @@ INVENT/
 ├── analytics_engine.py
 ├── databricks_bootstrap.py
 ├── assets/
-├── pages/
+├── views/
 │   ├── 0_Home.py
 │   ├── 1_Data_Onboarding.py
 │   ├── 2_AI_Analysis.py
@@ -354,3 +354,8 @@ INVENT/
 ├── demo_datasets/
 └── qa/
 ```
+
+
+## Navigation architecture
+
+INVENT uses a single Streamlit browser document. Application views are stored under `views/`, not Streamlit's reserved `pages/` directory. The sidebar is rendered by `theme.py` and changes the active view through `st.session_state["_invent_current_page"]`. This prevents browser refresh/reboot from restoring a deep page URL and avoids duplicate native Streamlit navigation. A fresh session starts on Home; normal in-app navigation remains stateful and smooth.

@@ -1,9 +1,7 @@
-"""
-Enterprise Semantic Analytics Platform — shared visual system.
-"""
+"""INVENT shared visual system and single-document navigation."""
 
-import streamlit as st
 from pathlib import Path
+import streamlit as st
 
 NAVY = "#0F1F35"
 NAVY_DEEP = "#0A1626"
@@ -21,71 +19,79 @@ RED_LIGHT = "#FBEBE9"
 GREEN = "#2E8B57"
 GREEN_LIGHT = "#E9F4EE"
 
+NAV_GROUPS = [
+    ("CREATE", ["Data Onboarding", "AI Analysis", "Semantic Intelligence", "Business Model", "QA Validation"]),
+    ("ANALYZE", ["Analytics", "Ask AI", "Genie Agent"]),
+    ("GOVERN", ["Security Center"]),
+]
+
 
 def inject_base_css():
     st.markdown(
         f"""
         <style>
           @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=Inter:wght@400;500;600;700&display=swap');
-
-          #MainMenu {{visibility: hidden;}}
-          footer {{visibility: hidden;}}
-
-          html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
-          .stApp {{ background: {CANVAS}; }}
-          .block-container {{ padding-top: 1.5rem; max-width: 1200px; }}
-
-          [data-testid="stHeader"] {{ background: {NAVY_DEEP} !important; }}
-          [data-testid="stHeader"] * {{ color: #C9D3DD !important; }}
-          [data-testid="stHeader"] svg {{ fill: #C9D3DD !important; }}
-
-          [data-testid="stSidebar"] {{ background: {NAVY_DEEP} !important; }}
-          [data-testid="stSidebar"] * {{ color: #C9D3DD !important; }}
-          [data-testid="stSidebarHeader"] {{
-            padding: 18px 16px 10px 16px !important;
-            border-bottom: 1px solid rgba(255,255,255,0.12);
-            margin-bottom: 6px;
+          #MainMenu {{visibility:hidden;}}
+          footer {{visibility:hidden;}}
+          html, body, [class*="css"] {{font-family:'Inter',sans-serif;}}
+          .stApp {{background:{CANVAS};}}
+          .block-container {{padding-top:1.35rem; max-width:1240px;}}
+          [data-testid="stHeader"] {{background:{NAVY_DEEP} !important;}}
+          [data-testid="stHeader"] * {{color:#C9D3DD !important;}}
+          [data-testid="stHeader"] svg {{fill:#C9D3DD !important;}}
+          [data-testid="stSidebar"] {{background:{NAVY_DEEP} !important; min-width:250px;}}
+          [data-testid="stSidebar"] > div:first-child {{padding-top:0.45rem;}}
+          [data-testid="stSidebar"] [data-testid="stButton"] button {{
+            border:1px solid transparent !important;
+            border-radius:9px !important;
+            min-height:38px !important;
+            text-align:left !important;
+            justify-content:flex-start !important;
+            padding:0.45rem 0.75rem !important;
+            margin:1px 0 !important;
+            background:transparent !important;
+            color:#C9D3DD !important;
+            font-weight:500 !important;
           }}
-          [data-testid="stSidebarHeader"] img {{ height: 40px !important; width: auto !important; }}
-          [data-testid="stSidebar"] [aria-current="page"] {{ background: rgba(27,122,140,0.28) !important; }}
-          [data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] {{ border-radius: 7px !important; margin-bottom: 2px; }}
-
-          .platform-topbar {{
-            background: {PANEL}; border: 1px solid {LINE}; border-radius: 10px;
-            padding: 16px 24px; margin-bottom: 20px;
+          [data-testid="stSidebar"] [data-testid="stButton"] button:hover {{
+            background:rgba(255,255,255,0.08) !important;
+            border-color:rgba(255,255,255,0.06) !important;
+            color:#FFFFFF !important;
           }}
-          .platform-topbar h1 {{ font-family: 'Source Serif 4', serif; font-size: 22px; font-weight: 600; color: {NAVY}; margin: 0; }}
-          .platform-topbar-sub {{ font-size: 12.5px; color: {SLATE_SOFT}; margin-top: 3px; }}
-
-          [data-testid="stMetric"] {{
-            background: {PANEL}; border: 1px solid {LINE}; border-radius: 10px; padding: 16px 18px;
+          [data-testid="stSidebar"] .invent-active [data-testid="stButton"] button {{
+            background:rgba(27,122,140,0.32) !important;
+            border-color:rgba(87,190,202,0.18) !important;
+            color:#FFFFFF !important;
+            font-weight:700 !important;
           }}
-          [data-testid="stMetricLabel"] {{
-            color: {SLATE_SOFT} !important; font-size: 11px !important; font-weight: 600;
-            text-transform: uppercase; letter-spacing: 0.4px;
+          [data-testid="stSidebar"] .invent-home [data-testid="stButton"] button {{
+            background:rgba(255,255,255,0.05) !important;
+            color:#FFFFFF !important;
+            font-weight:650 !important;
           }}
-          [data-testid="stMetricValue"] {{
-            font-family: 'Source Serif 4', serif !important; color: {NAVY} !important;
-            font-size: 25px !important; font-weight: 600 !important;
+          .invent-nav-heading {{
+            color:#7F93A6; font-size:10px; font-weight:700; letter-spacing:1.5px;
+            margin:18px 8px 7px 8px;
           }}
-
-          .platform-card-title {{ font-family: 'Source Serif 4', serif; font-size: 16px; font-weight: 600; color: {NAVY}; margin-bottom: 2px; }}
-          .platform-card-sub {{ font-size: 12px; color: {SLATE_SOFT}; margin-bottom: 10px; }}
-
-          .platform-tag {{ display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }}
-          .platform-tag.fact {{ background: {TEAL_LIGHT}; color: {TEAL}; }}
-          .platform-tag.dim {{ background: {AMBER_LIGHT}; color: #A2661E; }}
-          .platform-tag.pii {{ background: {RED_LIGHT}; color: {RED}; }}
-          .platform-tag.ai {{ background: {AMBER_LIGHT}; color: #A2661E; }}
-          .platform-tag.ok {{ background: {GREEN_LIGHT}; color: {GREEN}; }}
-
-          .platform-banner {{
-            background: {AMBER_LIGHT}; border: 1px solid #EAD3A8; border-radius: 8px;
-            padding: 10px 14px; font-size: 12.5px; color: #6B4E1E; margin-bottom: 14px;
-          }}
-          .platform-banner.info {{ background: #EAF4FB; border-color: #C7E2F4; color: #2C5A7A; }}
-          .platform-banner.warn {{ background: {RED_LIGHT}; border-color: #F0C9C6; color: {RED}; }}
-          .platform-banner.ok {{ background: {GREEN_LIGHT}; border-color: #C8E3D0; color: #1F5A3D; }}
+          .invent-sidebar-divider {{height:1px; background:rgba(255,255,255,0.09); margin:13px 8px;}}
+          .platform-topbar {{background:{PANEL}; border:1px solid {LINE}; border-radius:10px; padding:16px 24px; margin-bottom:20px;}}
+          .platform-topbar h1 {{font-family:'Source Serif 4',serif; font-size:22px; font-weight:600; color:{NAVY}; margin:0;}}
+          .platform-topbar-sub {{font-size:12.5px; color:{SLATE_SOFT}; margin-top:3px;}}
+          [data-testid="stMetric"] {{background:{PANEL}; border:1px solid {LINE}; border-radius:10px; padding:16px 18px;}}
+          [data-testid="stMetricLabel"] {{color:{SLATE_SOFT} !important; font-size:11px !important; font-weight:600; text-transform:uppercase; letter-spacing:.4px;}}
+          [data-testid="stMetricValue"] {{font-family:'Source Serif 4',serif !important; color:{NAVY} !important; font-size:25px !important; font-weight:600 !important;}}
+          .platform-card-title {{font-family:'Source Serif 4',serif; font-size:16px; font-weight:600; color:{NAVY}; margin-bottom:2px;}}
+          .platform-card-sub {{font-size:12px; color:{SLATE_SOFT}; margin-bottom:10px;}}
+          .platform-tag {{display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600;}}
+          .platform-tag.fact {{background:{TEAL_LIGHT}; color:{TEAL};}}
+          .platform-tag.dim {{background:{AMBER_LIGHT}; color:#A2661E;}}
+          .platform-tag.pii {{background:{RED_LIGHT}; color:{RED};}}
+          .platform-tag.ai {{background:{AMBER_LIGHT}; color:#A2661E;}}
+          .platform-tag.ok {{background:{GREEN_LIGHT}; color:{GREEN};}}
+          .platform-banner {{background:{AMBER_LIGHT}; border:1px solid #EAD3A8; border-radius:8px; padding:10px 14px; font-size:12.5px; color:#6B4E1E; margin-bottom:14px;}}
+          .platform-banner.info {{background:#EAF4FB; border-color:#C7E2F4; color:#2C5A7A;}}
+          .platform-banner.warn {{background:{RED_LIGHT}; border-color:#F0C9C6; color:{RED};}}
+          .platform-banner.ok {{background:{GREEN_LIGHT}; border-color:#C8E3D0; color:#1F5A3D;}}
         </style>
         """,
         unsafe_allow_html=True,
@@ -93,45 +99,40 @@ def inject_base_css():
 
 
 def navigate_to(page_name: str):
-    """Navigate inside INVENT without changing the browser URL.
-
-    Keeping one Streamlit document URL prevents browser refresh/reboot from
-    restoring a deep-linked page. A refresh therefore always starts at Home.
-    """
+    """Navigate inside the single INVENT document without changing the URL."""
+    if page_name not in dict([(name, name) for group, pages in NAV_GROUPS for name in pages] + [("Home", "Home")]):
+        page_name = "Home"
     st.session_state["_invent_current_page"] = page_name
     st.rerun()
 
 
 def render_sidebar_navigation():
-    """Render INVENT navigation in the sidebar without st.navigation()."""
-    pages = {
-        "Home": "Home",
-        "Data Onboarding": "Data Onboarding",
-        "AI Analysis": "AI Analysis",
-        "Semantic Intelligence": "Semantic Intelligence",
-        "Business Model": "Business Model",
-        "Analytics": "Analytics",
-        "Ask AI": "Ask AI",
-        "Genie Agent": "Genie Agent",
-        "Security Center": "Security Center",
-        "QA Validation": "QA Validation",
-    }
+    """Render one clean internal sidebar; no st.navigation/radio is used."""
     current = st.session_state.get("_invent_current_page", "Home")
-    labels = list(pages.keys())
-    try:
-        idx = labels.index(current)
-    except ValueError:
-        idx = 0
-    selected = st.sidebar.radio(
-        "",
-        labels,
-        index=idx,
-        key="_invent_sidebar_nav",
-        label_visibility="collapsed",
-    )
-    if selected != current:
-        st.session_state["_invent_current_page"] = selected
-        st.rerun()
+
+    st.sidebar.markdown('<div class="invent-sidebar-divider"></div>', unsafe_allow_html=True)
+
+    # Home is deliberately separate from workflow groups.
+    home_wrap = st.sidebar.container()
+    with home_wrap:
+        if current == "Home":
+            st.markdown('<div class="invent-active invent-home">', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="invent-home">', unsafe_allow_html=True)
+        if st.button("⌂  Home", key="nav_home", use_container_width=True, type="secondary"):
+            navigate_to("Home")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    for heading, page_names in NAV_GROUPS:
+        st.sidebar.markdown(f'<div class="invent-nav-heading">{heading}</div>', unsafe_allow_html=True)
+        for page_name in page_names:
+            if page_name == current:
+                st.sidebar.markdown('<div class="invent-active">', unsafe_allow_html=True)
+            else:
+                st.sidebar.markdown('<div>', unsafe_allow_html=True)
+            if st.button(page_name, key=f"nav_{page_name.lower().replace(' ', '_')}", use_container_width=True, type="secondary"):
+                navigate_to(page_name)
+            st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_sidebar_brand():
@@ -139,45 +140,23 @@ def render_sidebar_brand():
         return
     st.session_state["_invent_sidebar_brand_rendered"] = True
     logo_path = Path(__file__).resolve().parent / "assets" / "platform_logo.svg"
-
     if logo_path.is_file():
         try:
             st.logo(str(logo_path), size="large")
             return
         except Exception:
             pass
-
     st.sidebar.markdown(
-        """
-        <div style="
-            padding: 10px 8px 14px 8px;
-            margin-bottom: 8px;
-        ">
-            <div style="
-                font-size: 20px;
-                font-weight: 700;
-            ">
-                Enterprise Semantic
-            </div>
-            <div style="
-                font-size: 12px;
-                opacity: 0.65;
-            ">
-                Analytics Platform
-            </div>
-        </div>
-        """,
+        '<div style="padding:10px 8px 14px 8px;margin-bottom:8px;">'
+        '<div style="font-size:20px;font-weight:700;color:#FFFFFF;">Enterprise Semantic</div>'
+        '<div style="font-size:12px;opacity:.65;color:#C9D3DD;">Analytics Platform</div></div>',
         unsafe_allow_html=True,
     )
 
+
 def page_header(title: str, subtitle: str):
     st.markdown(
-        f"""
-        <div class="platform-topbar">
-          <h1>{title}</h1>
-          <div class="platform-topbar-sub">{subtitle}</div>
-        </div>
-        """,
+        f'<div class="platform-topbar"><h1>{title}</h1><div class="platform-topbar-sub">{subtitle}</div></div>',
         unsafe_allow_html=True,
     )
 

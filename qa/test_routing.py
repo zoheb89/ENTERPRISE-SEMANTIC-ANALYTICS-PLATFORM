@@ -4,33 +4,32 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = (ROOT / "app.py").read_text()
 THEME = (ROOT / "theme.py").read_text()
 
-# INVENT must remain a single browser document. Native multipage navigation
-# creates deep URLs that can be restored by the browser after F5/reboot.
-assert "st.navigation(" not in APP.replace("st.navigation()/st.Page()/st.switch_page()", "")
-assert "st.Page(" not in APP.replace("st.navigation()/st.Page()/st.switch_page()", "")
-assert "st.switch_page(" not in APP.replace("st.navigation()/st.Page()/st.switch_page()", "")
+# Streamlit's reserved pages/ directory must not exist: INVENT owns one
+# browser document and performs navigation through session state.
+assert not (ROOT / "pages").exists(), "Reserved Streamlit pages/ directory must not exist"
+assert (ROOT / "views").is_dir(), "INVENT views directory is missing"
+assert "st.navigation(" not in APP
+assert "st.Page(" not in APP
+assert "st.switch_page(" not in APP
 assert "runpy.run_path" in APP
 assert '"_invent_current_page"' in APP
 assert '"Home"' in APP
+assert '"views"' in APP
+assert "st.sidebar.radio(" not in THEME
+assert "st.switch_page(" not in THEME
 
-# No page may bypass the internal router.
-for page in (ROOT / "pages").glob("*.py"):
-    text = page.read_text()
-    assert "st.switch_page(" not in text, page.name
+for view in (ROOT / "views").glob("*.py"):
+    text = view.read_text()
+    assert "st.switch_page(" not in text, view.name
 
-# Ask AI must use the internal router for its fallback navigation.
-ask_ai = (ROOT / "pages" / "6_Ask_AI.py").read_text()
-assert "navigate_to(" in ask_ai
-assert "st.switch_page(" not in ask_ai
-
-onboarding = (ROOT / "pages" / "1_Data_Onboarding.py").read_text()
-assert '"xml"' in onboarding
-
-# Router must expose the core INVENT pages.
 for page_name in [
     "Home", "Data Onboarding", "AI Analysis", "Semantic Intelligence",
-    "Business Model", "Analytics", "Ask AI", "Security Center", "Genie Agent"
+    "Business Model", "QA Validation", "Analytics", "Ask AI",
+    "Genie Agent", "Security Center"
 ]:
     assert f'"{page_name}"' in APP
+
+onboarding = (ROOT / "views" / "1_Data_Onboarding.py").read_text()
+assert '"xml"' in onboarding
 
 print("INVENT ROUTING QA: PASS")
