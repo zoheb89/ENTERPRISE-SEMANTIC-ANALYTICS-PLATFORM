@@ -48,9 +48,46 @@ def _invent_app_instance_id() -> str:
 
 _app_instance_id = _invent_app_instance_id()
 
+# Detect a real browser load/refresh in the browser. `performance.timeOrigin`
+# changes on a full document load but remains stable across Streamlit's normal
+# widget/rerun cycle and client-side page navigation. This gives INVENT a
+# reliable browser-load boundary that server-side Session State alone cannot
+# provide.
+try:
+    from streamlit_js_eval import streamlit_js_eval
+
+    _navigation_epoch = streamlit_js_eval(
+        js_expressions="performance.timeOrigin",
+        want_output=True,
+        key="invent_navigation_epoch_v45",
+    )
+except Exception:
+    _navigation_epoch = None
+
 _previous_instance = st.session_state.get("_invent_app_instance_id")
+_is_new_app_instance = _previous_instance != _app_instance_id
+
+_previous_navigation_epoch = st.session_state.get("_invent_navigation_epoch")
+_is_new_browser_load = (
+    _navigation_epoch is not None
+    and _previous_navigation_epoch is not None
+    and str(_navigation_epoch) != str(_previous_navigation_epoch)
+)
+
 if _previous_instance != _app_instance_id:
+    # Server/app reboot or a brand-new Streamlit app instance.
     st.session_state["_invent_app_instance_id"] = _app_instance_id
+    st.session_state["_invent_navigation_epoch"] = _navigation_epoch
     st.switch_page("pages/0_Home.py")
+
+elif _is_new_browser_load:
+    # F5 / Cmd+R / browser refresh: always return to INVENT Home.
+    st.session_state["_invent_navigation_epoch"] = _navigation_epoch
+    st.switch_page("pages/0_Home.py")
+
+else:
+    st.session_state["_invent_app_instance_id"] = _app_instance_id
+    if _navigation_epoch is not None:
+        st.session_state["_invent_navigation_epoch"] = _navigation_epoch
 
 pg.run()
