@@ -386,24 +386,30 @@ def _merge_genie_serialized_space(
         metric_views = []
         data_sources["metric_views"] = metric_views
 
-    existing_metric_ids = {
-        item.get("identifier")
-        for item in metric_views
-        if isinstance(item, dict)
-    }
+    # Keep exactly one INVENT canonical Metric View for each domain Agent.
+    # Older releases registered one MV per fact; remove those legacy sources
+    # from the domain Agent while preserving unrelated user-managed sources.
+    metric_view_prefix = ".".join(metric_view_full_name.split(".")[:-1]) + "."
+    cleaned_metric_views = []
+    for item in metric_views:
+        identifier = str(item.get("identifier") or "") if isinstance(item, dict) else ""
+        if identifier == metric_view_full_name:
+            continue
+        if identifier.startswith(metric_view_prefix) and identifier.rsplit(".", 1)[-1].startswith("mv_"):
+            continue
+        cleaned_metric_views.append(item)
 
-    if metric_view_full_name not in existing_metric_ids:
-        metric_views.append(
-            {
-                "identifier": metric_view_full_name,
-                "description": [
-                    (
-                        f"INVENT governed semantic Metric View "
-                        f"for the {domain_name} domain."
-                    )
-                ],
-            }
-        )
+    cleaned_metric_views.append(
+        {
+            "identifier": metric_view_full_name,
+            "description": [
+                f"INVENT canonical governed Metric View for the {domain_name} domain.",
+                "All detected fact tables are published as Delta tables; this Agent uses one canonical domain Metric View.",
+            ],
+        }
+    )
+    data_sources["metric_views"] = cleaned_metric_views
+    metric_views = cleaned_metric_views
 
     # Sample questions
     questions = config["config"].setdefault(
@@ -800,6 +806,20 @@ def register_table_with_genie_space(
                 detail="No Metric View was supplied.",
             ),
         )
+
+    # First recover the deterministic domain agent. This prevents every
+    # publish from creating another INVENT — <domain> Agent when an older
+    # valid domain agent already exists.
+    existing_domain_space = _find_existing_genie_agent(domain_name or "domain")
+    if existing_domain_space:
+        space_id = existing_domain_space
+
+    # Always reuse the deterministic domain Agent when one exists. This is
+    # the idempotency guard that prevents repeated publishes from creating
+    # duplicate INVENT Agents.
+    existing_domain_space = _find_existing_genie_agent(domain_name or "domain")
+    if existing_domain_space:
+        space_id = existing_domain_space
 
     if space_id:
         if not _is_valid_genie_agent_id(space_id):

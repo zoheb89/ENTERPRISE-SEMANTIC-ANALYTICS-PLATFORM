@@ -247,45 +247,57 @@ def publish_domain(
                 )
 
             # ---------------------------------------------------------
-            # Publish one governed Metric View per fact.
+            # Publish ONE governed Metric View per DOMAIN.
             # ---------------------------------------------------------
-            for current_fact in model.facts:
+            # Multiple detected facts remain real Delta tables, but the
+            # application exposes exactly one canonical Metric View for a
+            # domain. This prevents mv_tickets / mv_usage / mv_devices etc.
+            # from becoming competing Genie sources on every publish.
+            primary_fact = fact_table
+            canonical_view_name = (
+                f"{catalog}.{schema}.mv_domain"
+            )
 
-                fact_safe = _sanitize_identifier(
-                    current_fact
-                )
-
-                view_name = (
+            # Remove legacy per-fact Metric Views created by older INVENT
+            # releases. Only INVENT-created mv_<fact> objects are touched;
+            # the uploaded Delta tables are never removed.
+            for legacy_fact in model.facts:
+                legacy_name = (
                     f"{catalog}.{schema}."
-                    f"mv_{fact_safe}"
+                    f"mv_{_sanitize_identifier(legacy_fact)}"
                 )
+                if legacy_name != canonical_view_name:
+                    try:
+                        cur.execute(f"DROP VIEW IF EXISTS {legacy_name}")
+                    except Exception:
+                        pass
 
-                (
-                    yaml_body,
-                    measure_names,
-                    dimension_names,
-                ) = _model_to_metric_view_yaml(
-                    model,
-                    current_fact,
-                    schema,
-                    catalog,
-                )
+            (
+                yaml_body,
+                measure_names,
+                dimension_names,
+            ) = _model_to_metric_view_yaml(
+                model,
+                primary_fact,
+                schema,
+                catalog,
+            )
 
-                cur.execute(
-                    f"""
-                    CREATE OR REPLACE VIEW
-                    {view_name}
-                    WITH METRICS
-                    LANGUAGE YAML
-                    AS $${yaml_body}$$
-                    """
-                )
+            cur.execute(
+                f"""
+                CREATE OR REPLACE VIEW
+                {canonical_view_name}
+                WITH METRICS
+                LANGUAGE YAML
+                AS $${yaml_body}$$
+                """
+            )
 
-                metric_views[current_fact] = {
-                    "metric_view": view_name,
-                    "measures": measure_names,
-                    "dimensions": dimension_names,
-                }
+            metric_views[primary_fact] = {
+                "metric_view": canonical_view_name,
+                "measures": measure_names,
+                "dimensions": dimension_names,
+            }
 
     # -------------------------------------------------------------
     # Optional reader permissions.
@@ -320,63 +332,30 @@ def publish_domain(
         )
     )
 
-    ordered_facts = [
-        fact_table
-    ] + [
-        f
-        for f in model.facts
-        if f != fact_table
+    # -------------------------------------------------------------
+    # One domain = one Genie Agent source.
+    # -------------------------------------------------------------
+    primary_mv = metric_views[primary_fact]
+    sample_questions = [
+        f"What are the key KPIs for {model.domain_name}?",
+        (
+            f"Show {primary_mv['measures'][0]} by the main business dimensions."
+            if primary_mv["measures"]
+            else f"Show the main trends for {model.domain_name}."
+        ),
     ]
 
-    first_genie_action = None
+    resolved_space_id, action = security.register_table_with_genie_space(
+        resolved_space_id,
+        table_full_name=f"{catalog}.{schema}.{_sanitize_identifier(primary_fact)}",
+        metric_view_full_name=primary_mv["metric_view"],
+        domain_name=model.domain_name,
+        measures=primary_mv["measures"],
+        dimensions=primary_mv["dimensions"],
+        sample_questions=sample_questions,
+    )
 
-    for current_fact in ordered_facts:
-
-        mv = metric_views[current_fact]
-
-        sample_questions = [
-            f"What are the key KPIs for {model.domain_name}?",
-            (
-                f"Show {mv['measures'][0]} by "
-                f"the main business dimensions."
-                if mv["measures"]
-                else (
-                    f"Show the main trends for "
-                    f"{model.domain_name}."
-                )
-            ),
-        ]
-
-        resolved_space_id, action = (
-            security.register_table_with_genie_space(
-                resolved_space_id,
-                table_full_name=(
-                    f"{catalog}.{schema}."
-                    f"{_sanitize_identifier(current_fact)}"
-                ),
-                metric_view_full_name=mv[
-                    "metric_view"
-                ],
-                domain_name=model.domain_name,
-                measures=mv["measures"],
-                dimensions=mv["dimensions"],
-                sample_questions=sample_questions,
-            )
-        )
-
-        security_actions.append(action)
-
-        if first_genie_action is None:
-            first_genie_action = action
-
-    # If no facts were present this would have failed earlier, but keep
-    # the result deterministic.
-    if first_genie_action is None:
-        security_actions.append(
-            security.record_genie_not_configured(
-                model.domain_name
-            )
-        )
+    security_actions.append(action)
 
     primary = metric_views[
         fact_table

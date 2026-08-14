@@ -110,7 +110,8 @@ if entry is None:
 
 st.caption(
     f"AI provider: **{provider_name()}** · "
-    f"Semantic source: `{entry.metric_view}`"
+    f"Semantic source: `{entry.metric_view}` · "
+    f"Fact tables: **{len(getattr(entry, 'fact_tables', []) or [entry.fact_table])}**"
 )
 
 
@@ -179,8 +180,8 @@ DOMAIN:
 GOVERNED METRIC VIEW:
 {_identifier(entry.metric_view)}
 
-FACT TABLE:
-{_identifier(entry.fact_table)}
+FACT TABLES:
+{len(getattr(entry, "fact_tables", []) or [entry.fact_table])} (governed Delta tables)
 
 MEASURES:
 {measures}

@@ -94,12 +94,9 @@ with st.container(border=True):
                 )
 
                 st.markdown(
-                    f"""
-                    **🟠 {rel.to_table} — "
-                    f"DIRECT DIMENSION / RELATED ENTITY**  
-                    `{rel.from_column} = {rel.to_column}`  
-                    **{rel.confidence * 100:.0f}% confidence** · N:1
-                    """
+                    f"**🟠 {rel.to_table} — DIRECT DIMENSION / RELATED ENTITY**  \n"
+                    f"`{rel.from_column} = {rel.to_column}`  \n"
+                    f"**{rel.confidence * 100:.0f}% confidence** · N:1"
                 )
 
                 st.caption(
@@ -238,22 +235,12 @@ with st.container(border=True):
         )
     )
 
-    st.markdown(
-        f"""
-        **Facts:** {len(model.facts)}  
-        **Dimensions:** {len(model.dimensions)}  
-        **Relationships:** {len(model.relationships)}  
-        **Direct fact relationships:** {direct_count}  
-        **Fact-to-fact relationships:** {fact_to_fact_count}  
-        **Many-to-many:** {
-            sum(
-                1
-                for r in model.relationships
-                if r.is_many_to_many
-            )
-        }
-        """
-    )
+    summary_cols = st.columns(5)
+    summary_cols[0].metric("Fact Tables", len(model.facts))
+    summary_cols[1].metric("Dimension Tables", len(model.dimensions))
+    summary_cols[2].metric("Relationships", len(model.relationships))
+    summary_cols[3].metric("Direct Fact Links", direct_count)
+    summary_cols[4].metric("Many-to-many", sum(1 for r in model.relationships if r.is_many_to_many))
 
 st.divider()
 
@@ -270,7 +257,12 @@ with st.container(border=True):
     elif not model.facts:
         st.warning("No fact table identified — nothing to publish yet.")
     else:
-        fact_choice = st.selectbox("Fact table to publish", model.facts)
+        # The platform publishes one domain-level governed Metric View.
+        # The selected primary fact is an implementation detail, not a
+        # showcase field. All detected fact tables are shown as a count.
+        fact_choice = model.facts[0]
+        st.metric("Fact Tables in Semantic Model", len(model.facts))
+        st.caption("All detected fact tables are published as governed Delta tables; one domain Metric View is the canonical analytics entry point.")
 
         if model.pii_findings:
             st.markdown(
@@ -302,13 +294,14 @@ with st.container(border=True):
                         row_count=model.tables[fact_choice].row_count,
                         published_at=datetime.datetime.utcnow().isoformat(),
                         genie_space_id=result.get("genie_space_id"),
+                        fact_tables=list(model.facts),
                     ))
 
                     st.session_state.last_published_domain = model.domain_name
                     st.session_state.security_actions = result["security_actions"]
 
                     st.success(f"**{model.domain_name}** published successfully — now live in Analytics, no redeploy needed.")
-                    st.markdown(f"**Catalog:** `{result['catalog']}`  \n**Schema:** `{result['schema']}`  \n**Metric View:** `{result['metric_view']}`")
+                    st.markdown(f"**Catalog:** `{result['catalog']}`  \n**Schema:** `{result['schema']}`  \n**Metric View:** `{result['metric_view']}`  \n**Fact Tables:** `{len(model.facts)}`")
 
                     st.markdown("**Publication status:**")
 
@@ -323,7 +316,7 @@ with st.container(border=True):
 
                     st.markdown(
                         "✅ Delta tables published  \n"
-                        "✅ Governed Metric View(s) published"
+                        "✅ One governed Metric View published"
                     )
 
                     if genie_actions:
@@ -375,10 +368,13 @@ with st.container(border=True):
                     st.error(f"Publish failed: {e}")
 
 st.divider()
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
-    if st.button("← Back to Semantic Intelligence", use_container_width=True):
+    if st.button("← Semantic Intelligence", use_container_width=True):
         navigate_to("Semantic Intelligence")
 with col2:
+    if st.button("✓ QA Validation", use_container_width=True):
+        navigate_to("QA Validation")
+with col3:
     if st.button("Go to Analytics →", use_container_width=True, type="primary"):
         navigate_to("Analytics")

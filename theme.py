@@ -59,12 +59,13 @@ def inject_base_css():
             background:{NAVY_DEEP} !important;
             border-right:1px solid rgba(255,255,255,.07);
         }}
-        [data-testid="stSidebar"] > div:first-child {{ padding:0.9rem 0.85rem 1.2rem; }}
-        [data-testid="stSidebarContent"] {{ padding-bottom:1rem; }}
+        [data-testid="stSidebar"] > div:first-child {{ padding:0.55rem 0.65rem 0.65rem !important; }}
+        [data-testid="stSidebarContent"] {{ padding-bottom:0.5rem !important; overflow-y:hidden !important; }}
+        [data-testid="stSidebarUserContent"] {{ padding-bottom:0.5rem !important; }}
         [data-testid="stSidebar"] [data-testid="stButton"] {{ width:100%; }}
         [data-testid="stSidebar"] [data-testid="stButton"] button {{
             width:100% !important;
-            min-height:38px !important;
+            min-height:34px !important;
             border-radius:8px !important;
             border:1px solid transparent !important;
             background:transparent !important;
@@ -72,8 +73,8 @@ def inject_base_css():
             box-shadow:none !important;
             justify-content:flex-start !important;
             text-align:left !important;
-            padding:0.45rem 0.72rem !important;
-            font-size:13px !important;
+            padding:0.28rem 0.62rem !important;
+            font-size:12.5px !important;
             font-weight:500 !important;
             transition:background .12s ease, color .12s ease;
         }}
@@ -105,9 +106,11 @@ def inject_base_css():
         .invent-brand-sub {{ color:#93A7B9; font-size:10px; margin-top:3px; letter-spacing:.2px; }}
         .invent-nav-heading {{
             color:#7F95A8; font-size:9px; font-weight:800; letter-spacing:1.7px;
-            margin:19px 6px 6px;
+            margin:13px 6px 4px;
         }}
-        .invent-home-spacer {{ height:3px; }}
+        .invent-home-spacer {{ height:0; }}
+        [data-testid="stSidebar"] [data-testid="stButton"] {{ margin-bottom:1px !important; }}
+        [data-testid="stSidebar"] .stMarkdown {{ margin-bottom:0 !important; }}
 
         /* Page surfaces */
         .platform-topbar {{

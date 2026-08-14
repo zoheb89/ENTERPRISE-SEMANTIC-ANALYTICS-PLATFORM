@@ -173,10 +173,13 @@ with tab4:
         st.info("No glossary entries generated.")
 
 st.divider()
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
+    if st.button("✓ QA Validation →", use_container_width=True):
+        navigate_to("QA Validation")
+with col2:
     if st.button("View Business Model →", use_container_width=True):
         navigate_to("Business Model")
-with col2:
+with col3:
     if st.button("Publish & View Analytics →", use_container_width=True, type="primary"):
         navigate_to("Business Model")

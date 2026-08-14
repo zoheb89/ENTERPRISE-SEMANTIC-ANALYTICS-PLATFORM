@@ -81,6 +81,8 @@ st.markdown(
 
     **Metric View:** `{entry.metric_view}`
 
+    **Fact Tables:** {len(getattr(entry, "fact_tables", []) or [entry.fact_table])}
+
     **Measures:** {", ".join(entry.measures) or "None"}
 
     **Dimensions:** {", ".join(entry.dimensions) or "None"}

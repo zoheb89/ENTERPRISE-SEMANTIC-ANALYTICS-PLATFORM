@@ -36,6 +36,7 @@ class RegistryEntry:
     row_count: int
     published_at: str
     genie_space_id: str | None = None
+    fact_tables: list[str] | None = None
 
 
 def _registry_table() -> str:
@@ -74,7 +75,9 @@ def ensure_registry_exists():
                     default_kpi STRING,
                     row_count BIGINT,
                     published_at STRING,
-                    genie_space_id STRING
+                    genie_space_id STRING,
+                    fact_tables_json STRING,
+                    fact_count BIGINT
                 )
                 USING DELTA
                 """
@@ -91,12 +94,11 @@ def ensure_registry_exists():
             }
 
             if "genie_space_id" not in columns:
-                cur.execute(
-                    f"""
-                    ALTER TABLE {full_table}
-                    ADD COLUMNS (genie_space_id STRING)
-                    """
-                )
+                cur.execute(f"ALTER TABLE {full_table} ADD COLUMNS (genie_space_id STRING)")
+            if "fact_tables_json" not in columns:
+                cur.execute(f"ALTER TABLE {full_table} ADD COLUMNS (fact_tables_json STRING)")
+            if "fact_count" not in columns:
+                cur.execute(f"ALTER TABLE {full_table} ADD COLUMNS (fact_count BIGINT)")
 
         conn.commit()
 
@@ -122,6 +124,7 @@ def register_domain(entry: RegistryEntry):
         ensure_ascii=False,
         default=str,
     )
+    fact_tables_json = json.dumps(entry.fact_tables or [entry.fact_table], ensure_ascii=False)
 
     with get_sql_connection() as conn:
         with conn.cursor() as cur:
@@ -148,9 +151,11 @@ def register_domain(entry: RegistryEntry):
                     default_kpi,
                     row_count,
                     published_at,
-                    genie_space_id
+                    genie_space_id,
+                    fact_tables_json,
+                    fact_count
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.domain_name,
@@ -164,6 +169,8 @@ def register_domain(entry: RegistryEntry):
                     int(entry.row_count),
                     entry.published_at,
                     entry.genie_space_id,
+                    fact_tables_json,
+                    len(entry.fact_tables or [entry.fact_table]),
                 ),
             )
 
@@ -197,7 +204,9 @@ def list_domains() -> list[RegistryEntry]:
                         default_kpi,
                         row_count,
                         published_at,
-                        genie_space_id
+                        genie_space_id,
+                        fact_tables_json,
+                        fact_count
                     FROM {full_table}
                     ORDER BY published_at DESC
                     """
@@ -221,6 +230,8 @@ def list_domains() -> list[RegistryEntry]:
                 row_count,
                 published_at,
                 genie_space_id,
+                fact_tables_json,
+                fact_count,
             ) = row
 
             try:
@@ -237,6 +248,15 @@ def list_domains() -> list[RegistryEntry]:
             except Exception:
                 dimensions = []
 
+            try:
+                fact_tables = json.loads(fact_tables_json or "[]")
+                if not isinstance(fact_tables, list):
+                    fact_tables = []
+            except Exception:
+                fact_tables = []
+            if not fact_tables and fact_table:
+                fact_tables = [fact_table]
+
             entries.append(
                 RegistryEntry(
                     domain_name=domain_name,
@@ -250,6 +270,7 @@ def list_domains() -> list[RegistryEntry]:
                     row_count=int(row_count or 0),
                     published_at=published_at,
                     genie_space_id=genie_space_id or None,
+                    fact_tables=fact_tables,
                 )
             )
 

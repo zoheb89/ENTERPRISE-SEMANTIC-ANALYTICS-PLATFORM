@@ -826,11 +826,7 @@ def _render_domain_information(entry: Any):
         entry
     )
 
-    fact_table = _entry_get(
-        entry,
-        "fact_table",
-        "—",
-    )
+    fact_tables = _entry_get(entry, "fact_tables", None) or [_entry_get(entry, "fact_table", "—")]
 
     row_count = _entry_get(
         entry,
@@ -862,8 +858,8 @@ def _render_domain_information(entry: Any):
     with c2:
 
         st.metric(
-            "Fact Table",
-            str(fact_table),
+            "Fact Tables",
+            len(fact_tables),
         )
 
     with c3:
