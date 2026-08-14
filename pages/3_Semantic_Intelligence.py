@@ -60,19 +60,74 @@ with tab1:
             st.dataframe(col_df, use_container_width=True, hide_index=True)
 
 with tab2:
+
     if not model.relationships:
-        st.info("No relationships detected. Try uploading files that share a common key column.")
+
+        st.info(
+            "No relationships detected. "
+            "Try uploading files that share a common key column."
+        )
+
     for rel in model.relationships:
-        conf_class = "ok" if rel.confidence >= 0.8 else ("dim" if rel.confidence >= 0.6 else "pii")
-        ai_badge = ' <span class="platform-tag ai">AI SUGGESTED</span>' if rel.is_ai_suggested else ""
-        m2m_badge = ' <span class="platform-tag pii">MANY-TO-MANY</span>' if rel.is_many_to_many else ""
+
+        conf_class = (
+            "ok"
+            if rel.confidence >= 0.8
+            else (
+                "dim"
+                if rel.confidence >= 0.6
+                else "pii"
+            )
+        )
+
+        ai_badge = (
+            ' <span class="platform-tag ai">AI SUGGESTED</span>'
+            if rel.is_ai_suggested
+            else ""
+        )
+
+        m2m_badge = (
+            ' <span class="platform-tag pii">MANY-TO-MANY</span>'
+            if rel.is_many_to_many
+            else ""
+        )
+
         with st.container(border=True):
+
             st.markdown(
-                f'<div class="platform-card-title">{rel.from_table}.{rel.from_column} → {rel.to_table}.{rel.to_column} '
-                f'<span class="platform-tag {conf_class}">{rel.confidence*100:.0f}% confidence</span>{ai_badge}{m2m_badge}</div>'
-                f'<div class="platform-card-sub">{rel.reason}</div>',
+                f"""
+                <div class="platform-card-title">
+                    {rel.from_table}.{rel.from_column}
+                    →
+                    {rel.to_table}.{rel.to_column}
+                    <span class="platform-tag {conf_class}">
+                        {rel.confidence * 100:.0f}% confidence
+                    </span>
+                    {ai_badge}
+                    {m2m_badge}
+                </div>
+                <div class="platform-card-sub">
+                    {rel.reason}
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
+
+            if (
+                not rel.is_ai_suggested
+                and "AI independently supported" in rel.reason
+            ):
+                st.caption(
+                    "✓ Deterministic relationship retained; "
+                    "AI independently corroborated the same edge. "
+                    "Reverse AI suggestions are not duplicated."
+                )
+
+    st.caption(
+        "Relationship direction is canonical FK → PK. "
+        "The same relationship cannot appear twice simply because "
+        "an AI suggestion used the reverse direction."
+    )
 
 with tab3:
     if not model.metrics:
