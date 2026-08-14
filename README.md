@@ -345,3 +345,40 @@ INVENT/
 ├── demo_datasets/
 └── qa/
 ```
+
+
+## Automated QA Quality Gate
+
+INVENT runs a metadata-driven QA pass immediately after semantic analysis
+and again immediately before publication.
+
+The runtime QA gate checks:
+
+- model completeness and fact/dimension exclusivity
+- relationship endpoints and reverse duplicates
+- many-to-many candidates
+- fact-to-fact topology
+- metric uniqueness and source validity
+- empty/invalid metric expressions
+- AI suggestions remaining review-only
+- source data quality warnings
+- PII/PHI findings
+
+Blocking semantic errors disable publication. Non-blocking warnings remain
+visible and are carried into the review workflow.
+
+The **QA & Validation** page exposes the same result in the application,
+including:
+
+- Semantic Quality Score
+- passed checks
+- warnings
+- blocking failures
+- publish readiness
+
+The standalone `qa/run_qa.py` remains available for CI/CD regression
+testing across the bundled demo domains.
+
+The QA score is a quality signal, not a substitute for human governance:
+PII/PHI findings and fact-to-fact topology can be valid conditions and are
+reported as warnings rather than automatically rejected.

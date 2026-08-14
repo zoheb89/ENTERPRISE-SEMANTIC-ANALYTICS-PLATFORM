@@ -17,6 +17,7 @@ from semantic_engine import (
 )
 import ai_engine
 import security_fabric as security
+from qa_engine import run_qa
 
 
 inject_base_css()
@@ -258,6 +259,10 @@ with st.container(border=True):
 
     st.session_state.llm_suggestion_count = len(reviewed_ai_suggestions)
 
+    # Mandatory runtime QA gate. The result is generated from the
+    # metadata-driven semantic model before the user can publish.
+    st.session_state.qa_result = run_qa(model)
+
     log.markdown(
         "  \n".join(messages)
         + "\n\n**Analysis complete.**"
@@ -272,7 +277,7 @@ st.success(
     f"{len(model.metrics)} metrics."
 )
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     if st.button(
@@ -293,6 +298,15 @@ with col2:
         )
 
 with col3:
+    if st.button(
+        "🧪 View QA Gate →",
+        use_container_width=True,
+    ):
+        st.switch_page(
+            "pages/9_QA_Validation.py"
+        )
+
+with col4:
     if st.button(
         "← Upload Different Data",
         use_container_width=True,

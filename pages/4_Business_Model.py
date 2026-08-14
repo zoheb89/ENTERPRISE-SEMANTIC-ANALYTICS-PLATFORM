@@ -5,6 +5,7 @@ import streamlit as st
 from theme import inject_base_css, render_sidebar_brand, page_header, section_title
 import security_fabric as security
 import publish_engine
+from qa_engine import run_qa
 from registry import RegistryEntry, ensure_registry_exists, register_domain
 
 inject_base_css()
@@ -93,10 +94,19 @@ with st.container(border=True):
                     rel.to_table
                 )
 
+                if rel.to_table in model.dimensions:
+                    role_label = "DIRECT DIMENSION / RELATED ENTITY"
+                    icon = "🟠"
+                elif rel.to_table in model.facts:
+                    role_label = "FACT RELATIONSHIP"
+                    icon = "🔵"
+                else:
+                    role_label = "RELATED ENTITY"
+                    icon = "⚪"
+
                 st.markdown(
                     f"""
-                    **🟠 {rel.to_table} — "
-                    f"DIRECT DIMENSION / RELATED ENTITY**  
+                    **{icon} {rel.to_table} — {role_label}**  
                     `{rel.from_column} = {rel.to_column}`  
                     **{rel.confidence * 100:.0f}% confidence** · N:1
                     """
@@ -157,7 +167,7 @@ with st.container(border=True):
 
             for target in all_tables:
 
-                if target == fact:
+                if target == fact or target not in model.dimensions:
                     continue
 
                 if target in direct_targets:
@@ -225,7 +235,7 @@ with st.container(border=True):
         for r in model.relationships
         if (
             r.from_table in model.facts
-            and r.to_table not in model.facts
+            and r.to_table in model.dimensions
         )
     )
 
@@ -257,6 +267,33 @@ with st.container(border=True):
 
 st.divider()
 
+# Mandatory QA gate immediately before publication.
+qa_result = run_qa(model)
+st.session_state.qa_result = qa_result
+
+if qa_result["status"] == "PASS":
+    st.success(
+        f"🧪 **QA PASS — {qa_result['score']}/100** · "
+        f"{qa_result['passed']} checks passed."
+    )
+elif qa_result["status"] == "WARN":
+    st.warning(
+        f"🧪 **QA PASS WITH WARNINGS — {qa_result['score']}/100** · "
+        f"{qa_result['warnings']} warning(s) require review."
+    )
+else:
+    st.error(
+        f"🧪 **QA BLOCKED — {qa_result['score']}/100** · "
+        f"{qa_result['blocking_failures']} blocking issue(s)."
+    )
+    if st.button(
+        "Fix / Review QA Issues →",
+        use_container_width=True,
+    ):
+        st.switch_page("pages/9_QA_Validation.py")
+
+st.divider()
+
 with st.container(border=True):
     section_title("Publish", "Creates real Delta tables and a governed Metric View — with automatic security actions, no manual Databricks step")
 
@@ -280,7 +317,7 @@ with st.container(border=True):
                 unsafe_allow_html=True,
             )
 
-        if st.button("Publish This Domain", type="primary"):
+        if st.button("Publish This Domain", type="primary", disabled=not qa_result["publish_allowed"]):
             with st.spinner("Publishing — creating tables, Metric View, and issuing security grants automatically…"):
                 try:
                     # Under PAT auth the publishing identity already owns

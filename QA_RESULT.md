@@ -1,37 +1,37 @@
-INVENT LOCAL QA RESULT
-========================
+# INVENT QA Result
 
-Date: 2026-08-14
+## Automated local regression
 
-Bundled demo domains tested:
-- Automotive
-- Banking
-- Energy
-- Healthcare
-- HR
-- Insurance
-- Manufacturing
-- Retail
-- Telecom
-- Travel
+**Status: PASS**
 
-Results:
-- Semantic engine execution: PASS
-- Fact/dimension classification: PASS
-- Relationship detection: PASS
-- Many-to-many false-positive regression: PASS
-- Manufacturing shared-dimension regression: PASS
-- Manufacturing fact/dimension regression: PASS
-- Travel alternate-unique-key regression: PASS
-- Metric generation: PASS
-- Python compilation: PASS
+The bundled demo suite was executed through the metadata-driven semantic
+engine and Python compilation checks.
 
-Manufacturing expected:
-FACT: production_runs, maintenance, defects
-DIMENSION: products, machines, plants
-M:N candidates: 0
+| Domain | Tables | Relationships | Facts | Dimensions | Metrics |
+|---|---:|---:|---:|---:|---:|
+| Automotive | 6 | 6 | 2 | 4 | 6 |
+| Banking | 6 | 5 | 3 | 3 | 6 |
+| Energy | 6 | 6 | 2 | 4 | 6 |
+| Healthcare | 5 | 4 | 2 | 3 | 7 |
+| HR | 6 | 6 | 2 | 4 | 7 |
+| Insurance | 6 | 6 | 3 | 3 | 6 |
+| Manufacturing | 6 | 6 | 3 | 3 | 11 |
+| Retail | 6 | 5 | 3 | 3 | 8 |
+| Telecom | 6 | 7 | 3 | 3 | 8 |
+| Travel | 6 | 4 | 3 | 3 | 6 |
 
-Important:
-A live Databricks/Genie smoke test requires the deployment's actual
-Streamlit Secrets and workspace permissions. Those credentials were not
-available in the source-only build environment and were not fabricated.
+Additional regressions:
+
+- Manufacturing shared-dimension topology: PASS
+- Travel alternate-key relationship: PASS
+- Python compilation: PASS (23 files)
+
+## Runtime QA
+
+The application now runs `qa_engine.run_qa()` after semantic analysis and
+before every publication attempt. Blocking failures disable Publish.
+
+The QA page is available as **QA & Validation** in the INVENT navigation.
+
+A live Databricks smoke test is intentionally not represented as passed
+without the target workspace credentials and permissions.

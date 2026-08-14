@@ -16,11 +16,12 @@ analytics = st.Page("pages/5_Analytics.py", title="Analytics", icon=":material/b
 ask_ai = st.Page("pages/6_Ask_AI.py", title="Ask AI", icon=":material/chat:")
 security = st.Page("pages/7_Security_Center.py", title="Security Center", icon=":material/shield:")
 genie = st.Page("pages/8_Genie.py", title="Genie Agent", icon=":material/smart_toy:")
+qa_validation = st.Page("pages/9_QA_Validation.py", title="QA & Validation", icon=":material/verified:")
 
 pg = st.navigation(
     {
         "": [home],
-        "Create — Data to Semantic Model": [onboarding, analysis, intelligence, business_model],
+        "Create — Data to Semantic Model": [onboarding, analysis, intelligence, qa_validation, business_model],
         "Analyze — Semantic Model to Insight": [analytics, ask_ai, genie],
         "Govern": [security],
     }
