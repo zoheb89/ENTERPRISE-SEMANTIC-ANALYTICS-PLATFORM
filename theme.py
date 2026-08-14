@@ -74,6 +74,10 @@ def inject_base_css():
             margin:18px 8px 7px 8px;
           }}
           .invent-sidebar-divider {{height:1px; background:rgba(255,255,255,0.09); margin:13px 8px;}}
+          .invent-brand {{display:flex; align-items:center; gap:10px; padding:7px 8px 17px 8px; margin-bottom:5px; border-bottom:1px solid rgba(255,255,255,0.09);}}
+          .invent-brand-mark {{width:38px; height:38px; border-radius:10px; background:{TEAL}; display:flex; align-items:center; justify-content:center; color:#FFFFFF; font-size:24px; font-weight:700;}}
+          .invent-brand-title {{color:#FFFFFF; font-size:18px; font-weight:800; letter-spacing:1px; line-height:1;}}
+          .invent-brand-sub {{color:#9BAAB8; font-size:10px; margin-top:4px; line-height:1.2;}}
           .platform-topbar {{background:{PANEL}; border:1px solid {LINE}; border-radius:10px; padding:16px 24px; margin-bottom:20px;}}
           .platform-topbar h1 {{font-family:'Source Serif 4',serif; font-size:22px; font-weight:600; color:{NAVY}; margin:0;}}
           .platform-topbar-sub {{font-size:12.5px; color:{SLATE_SOFT}; margin-top:3px;}}
@@ -139,17 +143,16 @@ def render_sidebar_brand():
     if st.session_state.get("_invent_sidebar_brand_rendered"):
         return
     st.session_state["_invent_sidebar_brand_rendered"] = True
-    logo_path = Path(__file__).resolve().parent / "assets" / "platform_logo.svg"
-    if logo_path.is_file():
-        try:
-            st.logo(str(logo_path), size="large")
-            return
-        except Exception:
-            pass
     st.sidebar.markdown(
-        '<div style="padding:10px 8px 14px 8px;margin-bottom:8px;">'
-        '<div style="font-size:20px;font-weight:700;color:#FFFFFF;">Enterprise Semantic</div>'
-        '<div style="font-size:12px;opacity:.65;color:#C9D3DD;">Analytics Platform</div></div>',
+        """
+        <div class="invent-brand">
+          <div class="invent-brand-mark">⌁</div>
+          <div>
+            <div class="invent-brand-title">INVENT</div>
+            <div class="invent-brand-sub">Enterprise Semantic Analytics</div>
+          </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 

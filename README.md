@@ -359,3 +359,11 @@ INVENT/
 ## Navigation architecture
 
 INVENT uses a single Streamlit browser document. Application views are stored under `views/`, not Streamlit's reserved `pages/` directory. The sidebar is rendered by `theme.py` and changes the active view through `st.session_state["_invent_current_page"]`. This prevents browser refresh/reboot from restoring a deep page URL and avoids duplicate native Streamlit navigation. A fresh session starts on Home; normal in-app navigation remains stateful and smooth.
+
+## v4.8 Navigation Contract
+
+INVENT is a single-document Streamlit application. The repository intentionally has **no `pages/` directory**, no `st.navigation()`, no `st.Page()`, and no `st.switch_page()`. Views live under `views/` and are dispatched by `app.py` using session state. This avoids competing Streamlit navigation surfaces and deep-page URLs.
+
+The left sidebar is the only navigation surface. Home is the landing page; users then move through Data Onboarding, AI Analysis, Semantic Intelligence, Business Model, QA Validation, Analytics, Ask AI, Genie Agent, and Security Center.
+
+The sample-domain selector has no hard-coded Healthcare default. It uses the first available checked-in demo domain only when no valid prior selection exists, so stale session state from older builds cannot silently force Healthcare.

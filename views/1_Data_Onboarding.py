@@ -39,8 +39,8 @@ if "llm_suggestion_count" not in st.session_state:
 if "onboarding_source" not in st.session_state:
     st.session_state.onboarding_source = "Upload files"
 
-if "onboarding_sample_domain" not in st.session_state:
-    st.session_state.onboarding_sample_domain = "Healthcare"
+# The sample selector is driven only by the checked-in demo-domain inventory.
+# Never hard-code Healthcare as the default.
 
 if "onboarding_upload_domain" not in st.session_state:
     st.session_state.onboarding_upload_domain = ""
@@ -166,11 +166,20 @@ with st.container(border=True):
 
     if source == "Try a sample domain":
 
+        demo_domains = available_demo_domains()
+        if not demo_domains:
+            st.error("No sample domains are available in this deployment.")
+            st.stop()
+
+        # Repair stale session state from older builds (including the old
+        # hard-coded Healthcare value) before creating the selectbox.
+        current_sample = st.session_state.get("onboarding_sample_domain")
+        if current_sample not in demo_domains:
+            st.session_state["onboarding_sample_domain"] = demo_domains[0]
+
         sample_choice = st.selectbox(
             "Sample domain",
-            available_demo_domains() or [
-                "Healthcare",
-            ],
+            demo_domains,
             key="onboarding_sample_domain",
         )
 
