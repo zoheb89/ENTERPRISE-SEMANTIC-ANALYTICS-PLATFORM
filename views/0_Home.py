@@ -35,6 +35,32 @@ with col2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# Production build fingerprint — intentionally visible so deployment can be verified.
+st.markdown(
+    "<div style=\"background:#EAF7F8;border:1px solid #BDE0E4;border-radius:10px;padding:10px 14px;margin-bottom:18px;\">"
+    "<b style=\"color:#087B8C\">C INVENT PRODUCTION BUILD 2026.08.14-FINAL-02</b>"
+    "<span style=\"color:#5C7184;margin-left:12px\">"
+    "Live navigation: Data Onboarding · Databricks Discovery · Analytics · Ask AI · Genie AI</span></div>",
+    unsafe_allow_html=True,
+)
+
+# Explicit onboarding split requested for the final product.
+ob1, ob2 = st.columns(2)
+with ob1:
+    with st.container(border=True):
+        st.markdown("### ⇧ Data Onboarding")
+        st.caption("CSV · XLSX · JSON · Parquet · XML — profile and onboard source data.")
+        if st.button("Open Data Onboarding →", use_container_width=True, key="home_onboard"):
+            navigate_to("Data Onboarding")
+with ob2:
+    with st.container(border=True):
+        st.markdown("### ⌘ Databricks Discovery")
+        st.caption("Unity Catalog · schemas · tables · columns · real Metric Views.")
+        if st.button("Open Databricks Discovery →", use_container_width=True, key="home_discovery"):
+            navigate_to("Databricks Discovery")
+
+st.divider()
+
 domains = ["Healthcare", "Finance", "Retail", "Banking", "Insurance", "Manufacturing", "Any Domain"]
 chips = "".join(
     f'<span style="display:inline-block; background:#FFFFFF; border:1px solid #E2E1DB; '

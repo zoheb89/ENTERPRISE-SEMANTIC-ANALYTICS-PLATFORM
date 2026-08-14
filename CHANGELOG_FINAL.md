@@ -56,3 +56,13 @@ CSV, XLSX, XLS, JSON, Parquet and XML are enabled. `pyarrow` is pinned in requir
 - All 3 Travel facts represented in the generated source relation: PASS
 - XML ingestion: PASS
 - Parquet ingestion test is deployment-dependent in the build container; `pyarrow` is included in requirements.
+
+## Build fingerprint / deployment verification
+
+The final package now displays `C-INVENT-2026.08.14-FINAL-02` on Home and exposes a Deployment Verification page. This prevents an old Streamlit Cloud repository build from being mistaken for the final package.
+
+The sidebar explicitly contains:
+- ONBOARD: Data Onboarding, Databricks Discovery
+- MODEL: AI Analysis, Semantic Intelligence, Business Model, QA Validation
+- ANALYZE: Analytics, Ask AI, Genie AI
+- GOVERN: Security Center, Connectors, Audit & Policies, Deployment Verification

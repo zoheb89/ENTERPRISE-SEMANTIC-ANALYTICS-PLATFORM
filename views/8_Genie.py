@@ -33,7 +33,7 @@ inject_base_css()
 render_sidebar_brand()
 
 page_header(
-    "Genie Agent",
+    "Genie AI",
     "Databricks-native conversational analytics over INVENT's governed semantic model",
 )
 
@@ -110,7 +110,7 @@ genie_url = security.genie_ui_url(
 )
 
 st.markdown(
-    "### 🧞 Databricks Genie"
+    "### 🧞 Databricks Genie AI"
 )
 
 st.caption(

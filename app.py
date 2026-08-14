@@ -20,7 +20,7 @@ if '_invent_current_page' not in st.session_state:
     st.session_state['_invent_current_page']='Home'
 render_sidebar_brand(); render_sidebar_navigation()
 VIEWS={
-'Home':'0_Home.py','Data Onboarding':'1_Data_Onboarding.py','AI Analysis':'2_AI_Analysis.py','Semantic Intelligence':'3_Semantic_Intelligence.py','Business Model':'4_Business_Model.py','QA Validation':'9_QA_Validation.py','Analytics':'5_Analytics.py','Ask AI':'6_Ask_AI.py','Genie Agent':'8_Genie.py','Security Center':'7_Security_Center.py','Databricks Discovery':'10_Databricks_Discovery.py','Connectors':'11_Connectors.py','Audit & Policies':'12_Audit.py'}
+'Home':'0_Home.py','Data Onboarding':'1_Data_Onboarding.py','AI Analysis':'2_AI_Analysis.py','Semantic Intelligence':'3_Semantic_Intelligence.py','Business Model':'4_Business_Model.py','QA Validation':'9_QA_Validation.py','Analytics':'5_Analytics.py','Ask AI':'6_Ask_AI.py','Genie AI':'8_Genie.py','Security Center':'7_Security_Center.py','Databricks Discovery':'10_Databricks_Discovery.py','Connectors':'11_Connectors.py','Audit & Policies':'12_Audit.py','Deployment Verification':'13_Deployment_Verification.py'}
 current=st.session_state.get('_invent_current_page','Home')
 path=Path(__file__).parent/'views'/VIEWS.get(current,VIEWS['Home'])
 if not path.exists(): st.error(f'Missing C INVENT view: {path.name}'); st.stop()

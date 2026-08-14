@@ -2,7 +2,7 @@
 import streamlit as st
 
 NAVY='#0B1F36'; NAVY2='#102B49'; TEAL='#0A8FA3'; TEAL2='#087B8C'; CANVAS='#F4F7FA'; PANEL='#FFFFFF'; SLATE='#23364D'; SOFT='#6C7E91'; LINE='#DCE5ED'; GREEN='#168A58'; GREEN_LIGHT='#EAF8F1'; AMBER='#C77A19'; AMBER_LIGHT='#FFF6E6'; RED='#B84B45'
-NAV_GROUPS=[('CREATE',[('Data Onboarding','⇧'),('AI Analysis','✦'),('Semantic Intelligence','◈'),('Business Model','◇'),('QA Validation','✓')]),('ANALYZE',[('Analytics','▥'),('Ask AI','▤'),('Genie Agent','✧')]),('GOVERN',[('Databricks Discovery','⌘'),('Security Center','◇'),('Connectors','↗'),('Audit & Policies','◷')])]
+NAV_GROUPS=[('ONBOARD',[('Data Onboarding','⇧'),('Databricks Discovery','⌘')]),('MODEL',[('AI Analysis','✦'),('Semantic Intelligence','◈'),('Business Model','◇'),('QA Validation','✓')]),('ANALYZE',[('Analytics','▥'),('Ask AI','▤'),('Genie AI','✧')]),('GOVERN',[('Security Center','◇'),('Connectors','↗'),('Audit & Policies','◷'),('Deployment Verification','✓')])]
 
 def inject_base_css():
     st.markdown(f'''<style>
