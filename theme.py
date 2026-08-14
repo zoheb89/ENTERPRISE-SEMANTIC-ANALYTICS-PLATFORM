@@ -57,4 +57,6 @@ def render_sidebar_navigation():
 
 def page_header(title,subtitle): st.markdown(f'<div class="platform-topbar"><h1>{title}</h1><div class="platform-topbar-sub">{subtitle}</div></div>',unsafe_allow_html=True)
 def section_title(title,subtitle=''):
-    st.markdown(f'<div class="platform-card-title">{title}</div>{f"<div class=\"platform-card-sub\">{subtitle}</div>" if subtitle else ""}',unsafe_allow_html=True)
+    subtitle_html = f'<div class="platform-card-sub">{subtitle}</div>' if subtitle else ""
+    html = f'<div class="platform-card-title">{title}</div>{subtitle_html}'
+    st.markdown(html, unsafe_allow_html=True)
