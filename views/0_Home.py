@@ -38,9 +38,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 # Production build fingerprint — intentionally visible so deployment can be verified.
 st.markdown(
     "<div style=\"background:#EAF7F8;border:1px solid #BDE0E4;border-radius:10px;padding:10px 14px;margin-bottom:18px;\">"
-    "<b style=\"color:#087B8C\">C INVENT PRODUCTION BUILD 2026.08.14-FINAL-02</b>"
     "<span style=\"color:#5C7184;margin-left:12px\">"
-    "Live navigation: Data Onboarding · Databricks Discovery · Analytics · Ask AI · Genie AI</span></div>",
     unsafe_allow_html=True,
 )
 
