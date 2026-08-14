@@ -35,13 +35,6 @@ with col2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Production build fingerprint — intentionally visible so deployment can be verified.
-st.markdown(
-    "<div style=\"background:#EAF7F8;border:1px solid #BDE0E4;border-radius:10px;padding:10px 14px;margin-bottom:18px;\">"
-    "<span style=\"color:#5C7184;margin-left:12px\">"
-    unsafe_allow_html=True,
-)
-
 # Explicit onboarding split requested for the final product.
 ob1, ob2 = st.columns(2)
 with ob1:
