@@ -155,79 +155,530 @@ def _normalize_col_name(name: str) -> str:
     return n
 
 
+def _normalize_value_for_comparison(v) -> str:
+    """
+    Normalizes a value to a comparable string form, collapsing the
+    float/int representation mismatch that occurs when pandas upcasts
+    an otherwise-integer column to float because it contains a null
+    (e.g. a nullable foreign key like manager_id becomes 33.0 instead
+    of 33). Without this, comparing "33.0" against "33" as raw strings
+    finds zero overlap even though they're the same value -- a real
+    bug that silently broke relationship detection (both cross-table
+    and self-referencing) any time one side of a real foreign key had
+    a null and the other didn't. Caught by testing a self-referencing
+    manager_id column, but the fix applies universally since this
+    function is used by every relationship-detection comparison.
+    """
+    s = str(v)
+    if s.endswith(".0"):
+        try:
+            float(s)
+            return s[:-2]
+        except ValueError:
+            pass
+    return s
+
+
 def _value_overlap_ratio(series_a: pd.Series, series_b: pd.Series, sample_size: int = 500) -> float:
-    a_vals = set(series_a.dropna().astype(str).unique()[:sample_size])
+    a_vals = {_normalize_value_for_comparison(v) for v in series_a.dropna().unique()[:sample_size]}
     if not a_vals:
         return 0.0
-    b_vals = set(series_b.dropna().astype(str).unique()[:sample_size * 4])
+    b_vals = {_normalize_value_for_comparison(v) for v in series_b.dropna().unique()[:sample_size * 4]}
     if not b_vals:
         return 0.0
     return len(a_vals & b_vals) / len(a_vals)
 
 
-def detect_relationships(profiles: dict[str, TableProfile]) -> list[RelationshipCandidate]:
+def _find_own_primary_key_column(profile: TableProfile) -> ColumnProfile | None:
+    """Best-guess at a table's own primary key: the column with the
+    highest uniqueness ratio among its id-token-named columns. Used by
+    self-join detection below -- a heuristic, not a guarantee, same
+    spirit as the rest of this engine's detection logic."""
+    id_cols = [c for c in profile.columns if _looks_like_id_column(c.name, c.dtype)]
+    if not id_cols:
+        return None
+    return max(id_cols, key=lambda c: c.uniqueness_ratio)
+
+
+def detect_self_referencing_relationships(profiles: dict[str, TableProfile]) -> list[RelationshipCandidate]:
+    """
+    Detects hierarchical self-joins WITHIN a single table -- e.g.
+    manager_id referencing employee_id in the same Employees table
+    (an org chart), or parent_category_id referencing category_id (a
+    category tree), or parent_part_id referencing part_id (a bill of
+    materials).
+
+    This is a genuinely different detection problem than
+    detect_relationships() above, which only ever compares columns
+    ACROSS two different tables and therefore structurally cannot find
+    a relationship where both sides live in the same table -- confirmed
+    empirically: a table with a manager_id column produced zero
+    relationships until this function was added.
+
+    The hard part, found through testing, is telling a genuine
+    hierarchy column apart from an ordinary foreign key to a DIFFERENT
+    table that just happens to have overlapping id values by
+    coincidence of small sequential ranges (e.g. a Claims table with
+    both claim_id 1-150 and an unrelated claimant_customer_id 1-200).
+    Name-root matching against the CURRENT table's own name doesn't
+    work either: "manager_id" and "Employees" share no name root at
+    all, even though that's the canonical example this feature exists
+    for.
+
+    The actual distinguishing signal: a genuine self-reference does NOT
+    match the name of any OTHER real table in this same upload. A false
+    positive like claimant_customer_id clearly references "customer" --
+    and if a Customers table genuinely exists in this upload, that's
+    real evidence this is an ordinary cross-table FK (missed by
+    detect_relationships() only because the column is misleadingly
+    named), not a hierarchy. So: exclude any id-token column whose name
+    matches another table's name/singular form, then check remaining
+    candidates for value overlap against the table's own primary key.
+    """
+    candidates: list[RelationshipCandidate] = []
+
+    other_table_roots = {
+        re.sub(r'\.(csv|xlsx?)$', '', name, flags=re.IGNORECASE).lower().rstrip("s")
+        for name in profiles.keys()
+    }
+
+    for table_name, profile in profiles.items():
+        pk_col = _find_own_primary_key_column(profile)
+        if pk_col is None or pk_col.uniqueness_ratio < 0.95:
+            continue  # no confident primary key to self-join against
+
+        this_table_root = re.sub(r'\.(csv|xlsx?)$', '', table_name, flags=re.IGNORECASE).lower().rstrip("s")
+
+        for c in profile.columns:
+            if c.name == pk_col.name:
+                continue
+            if not _looks_like_id_column(c.name, c.dtype):
+                continue
+
+            candidate_tokens = set(re.split(r'[_\s\-]+', c.name.lower()))
+            references_another_real_table = any(
+                root != this_table_root and (root in candidate_tokens or any(t == root for t in candidate_tokens))
+                for root in other_table_roots
+            )
+            if references_another_real_table:
+                # This looks like an ordinary foreign key to a table
+                # that genuinely exists in this upload, not a
+                # self-referencing hierarchy -- e.g.
+                # claimant_customer_id when a Customers table is
+                # present. Leave it for detect_relationships() to
+                # (attempt to) match cross-table; don't treat it as a
+                # self-join just because its values happen to overlap
+                # this table's own primary key by coincidence.
+                continue
+
+            overlap = _value_overlap_ratio(profile.df[c.name], profile.df[pk_col.name])
+            if overlap < 0.5:
+                continue
+
+            non_null_pct = 100 - c.null_pct
+            confidence = round(min(1.0, 0.4 * overlap + 0.3 + (0.2 if non_null_pct < 100 else 0.1)), 2)
+
+            candidates.append(RelationshipCandidate(
+                from_table=table_name, from_column=c.name,
+                to_table=table_name, to_column=pk_col.name,
+                confidence=confidence,
+                reason=(
+                    f"Self-referencing candidate within {table_name}: {c.name} looks like an id column "
+                    f"whose values ({overlap*100:.0f}% overlap) exist within {pk_col.name}, this table's "
+                    f"own apparent primary key — suggests a hierarchy (e.g. manager/employee, "
+                    f"parent/child category, or bill-of-materials)"
+                ),
+            ))
+
+    return candidates
+
+
+
+def _relationship_key(
+    from_table: str,
+    from_column: str,
+    to_table: str,
+    to_column: str,
+) -> tuple:
+    """
+    Canonical unordered key for a relationship.
+
+    This prevents:
+        A.id -> B.id
+    and
+        B.id -> A.id
+
+    from becoming two semantic relationships.
+    """
+    left = (from_table, from_column)
+    right = (to_table, to_column)
+    return tuple(sorted((left, right)))
+
+
+def _orient_relationship(
+    table_a: str,
+    col_a: ColumnProfile,
+    table_b: str,
+    col_b: ColumnProfile,
+    overlap_a_in_b: float,
+    overlap_b_in_a: float,
+) -> tuple[str, str, str, str, float]:
+    """
+    Return the canonical child/FK -> parent/PK direction.
+
+    Direction is based on:
+      1. Which side is more unique (PK-like).
+      2. Which side's values are contained in the other side.
+      3. Table/column identity naming as a tie-breaker.
+
+    The result is independent of upload/table iteration order.
+    """
+
+    # A clear uniqueness difference is the strongest signal.
+    if col_a.uniqueness_ratio > col_b.uniqueness_ratio + 0.05:
+        return (
+            table_b,
+            col_b.name,
+            table_a,
+            col_a.name,
+            overlap_b_in_a,
+        )
+
+    if col_b.uniqueness_ratio > col_a.uniqueness_ratio + 0.05:
+        return (
+            table_a,
+            col_a.name,
+            table_b,
+            col_b.name,
+            overlap_a_in_b,
+        )
+
+    # When uniqueness is close, the direction with stronger containment
+    # is the more likely FK -> PK direction.
+    if overlap_a_in_b > overlap_b_in_a + 0.05:
+        return (
+            table_a,
+            col_a.name,
+            table_b,
+            col_b.name,
+            overlap_a_in_b,
+        )
+
+    if overlap_b_in_a > overlap_a_in_b + 0.05:
+        return (
+            table_b,
+            col_b.name,
+            table_a,
+            col_a.name,
+            overlap_b_in_a,
+        )
+
+    # Final deterministic tie-breaker: preserve stable lexical order.
+    # This is only a fallback; equal uniqueness/containment is inherently
+    # ambiguous and should not be presented as a strong relationship.
+    if (table_a, col_a.name) <= (table_b, col_b.name):
+        return (
+            table_a,
+            col_a.name,
+            table_b,
+            col_b.name,
+            overlap_a_in_b,
+        )
+
+    return (
+        table_b,
+        col_b.name,
+        table_a,
+        col_a.name,
+        overlap_b_in_a,
+    )
+
+
+def detect_relationships(
+    profiles: dict[str, TableProfile],
+) -> list[RelationshipCandidate]:
+    """
+    Detect cross-table FK -> PK relationships.
+
+    Improvements:
+      - checks value overlap in both directions
+      - orients the relationship independently of table iteration order
+      - canonicalizes the relationship so reverse duplicates are impossible
+      - identifies likely many-to-many candidates
+      - preserves explainable evidence
+    """
+
     candidates: list[RelationshipCandidate] = []
     table_names = list(profiles.keys())
 
     for i, t1 in enumerate(table_names):
         for t2 in table_names[i + 1:]:
             p1, p2 = profiles[t1], profiles[t2]
+
             for c1 in p1.columns:
                 for c2 in p2.columns:
+
                     if _normalize_col_name(c1.name) != _normalize_col_name(c2.name):
                         continue
-                    if _normalize_col_name(c1.name) in ("", "name", "date", "description"):
+
+                    normalized_name = _normalize_col_name(c1.name)
+
+                    if normalized_name in (
+                        "",
+                        "name",
+                        "date",
+                        "description",
+                    ):
                         continue
 
-                    overlap = _value_overlap_ratio(p1.df[c1.name], p2.df[c2.name])
+                    overlap_1_in_2 = _value_overlap_ratio(
+                        p1.df[c1.name],
+                        p2.df[c2.name],
+                    )
+                    overlap_2_in_1 = _value_overlap_ratio(
+                        p2.df[c2.name],
+                        p1.df[c1.name],
+                    )
+
+                    overlap = max(
+                        overlap_1_in_2,
+                        overlap_2_in_1,
+                    )
+
                     if overlap < 0.5:
                         continue
 
-                    asymmetry = abs(c1.uniqueness_ratio - c2.uniqueness_ratio)
-                    confidence = min(1.0, 0.5 * overlap + 0.3 * (1 if asymmetry > 0.3 else 0.5) + 0.2)
+                    (
+                        fk_table,
+                        fk_col,
+                        pk_table,
+                        pk_col,
+                        fk_to_pk_overlap,
+                    ) = _orient_relationship(
+                        t1,
+                        c1,
+                        t2,
+                        c2,
+                        overlap_1_in_2,
+                        overlap_2_in_1,
+                    )
 
-                    if c1.uniqueness_ratio >= c2.uniqueness_ratio:
-                        pk_table, pk_col, fk_table, fk_col = t1, c1.name, t2, c2.name
-                        pk_uniqueness, fk_uniqueness = c1.uniqueness_ratio, c2.uniqueness_ratio
-                    else:
-                        pk_table, pk_col, fk_table, fk_col = t2, c2.name, t1, c1.name
-                        pk_uniqueness, fk_uniqueness = c2.uniqueness_ratio, c1.uniqueness_ratio
+                    fk_profile = profiles[fk_table]
+                    pk_profile = profiles[pk_table]
 
-                    is_m2m = pk_uniqueness < 0.8 and fk_uniqueness < 0.8
+                    fk_column = next(
+                        c for c in fk_profile.columns
+                        if c.name == fk_col
+                    )
+                    pk_column = next(
+                        c for c in pk_profile.columns
+                        if c.name == pk_col
+                    )
+
+                    pk_uniqueness = pk_column.uniqueness_ratio
+                    fk_uniqueness = fk_column.uniqueness_ratio
+
+                    asymmetry = abs(
+                        pk_uniqueness - fk_uniqueness
+                    )
+
+                    confidence = min(
+                        1.0,
+                        0.50 * fk_to_pk_overlap
+                        + 0.30 * (
+                            1.0
+                            if asymmetry > 0.30
+                            else 0.5
+                        )
+                        + 0.20,
+                    )
+
+                    is_m2m = (
+                        pk_uniqueness < 0.80
+                        and fk_uniqueness < 0.80
+                    )
 
                     reason = (
-                        f"Column names match ({c1.name} ~ {c2.name}); "
-                        f"{overlap*100:.0f}% of values overlap; "
+                        f"Column names match ({fk_col} ~ {pk_col}); "
+                        f"{fk_to_pk_overlap * 100:.0f}% of "
+                        f"{fk_table}.{fk_col} values exist in "
+                        f"{pk_table}.{pk_col}; "
                         f"{pk_table}.{pk_col} looks like the primary key "
-                        f"(uniqueness {pk_uniqueness*100:.0f}%)"
+                        f"(uniqueness {pk_uniqueness * 100:.0f}%)"
                     )
+
                     if is_m2m:
-                        reason += " — neither side is highly unique; possible many-to-many relationship"
+                        reason += (
+                            " — neither side is highly unique; "
+                            "possible many-to-many relationship"
+                        )
 
-                    candidates.append(RelationshipCandidate(
-                        from_table=fk_table, from_column=fk_col,
-                        to_table=pk_table, to_column=pk_col,
-                        confidence=round(confidence, 2), reason=reason,
-                        is_many_to_many=is_m2m,
-                    ))
+                    candidates.append(
+                        RelationshipCandidate(
+                            from_table=fk_table,
+                            from_column=fk_col,
+                            to_table=pk_table,
+                            to_column=pk_col,
+                            confidence=round(confidence, 2),
+                            reason=reason,
+                            is_many_to_many=is_m2m,
+                        )
+                    )
 
-    candidates.sort(key=lambda c: -c.confidence)
-    seen = set()
-    deduped = []
-    for c in candidates:
-        key = (c.from_table, c.from_column)
-        if key in seen:
+    candidates.extend(
+        detect_self_referencing_relationships(profiles)
+    )
+
+    # -------------------------------------------------------------
+    # Canonical de-duplication.
+    #
+    # Two directions of the same FK/PK relationship can never survive
+    # as two semantic relationships.
+    # -------------------------------------------------------------
+    best_by_key: dict[tuple, RelationshipCandidate] = {}
+
+    for candidate in candidates:
+        key = _relationship_key(
+            candidate.from_table,
+            candidate.from_column,
+            candidate.to_table,
+            candidate.to_column,
+        )
+
+        existing = best_by_key.get(key)
+
+        if existing is None:
+            best_by_key[key] = candidate
             continue
-        seen.add(key)
-        deduped.append(c)
-    return deduped
+
+        # Prefer deterministic evidence over an AI suggestion if this
+        # function is ever passed mixed candidates.
+        if (
+            existing.is_ai_suggested
+            and not candidate.is_ai_suggested
+        ):
+            best_by_key[key] = candidate
+            continue
+
+        if (
+            candidate.confidence
+            > existing.confidence
+        ):
+            best_by_key[key] = candidate
+
+    return sorted(
+        best_by_key.values(),
+        key=lambda r: -r.confidence,
+    )
+
+
+def canonicalize_relationships(
+    relationships: list[RelationshipCandidate],
+) -> list[RelationshipCandidate]:
+    """
+    Merge deterministic and AI suggestions representing the same
+    relationship.
+
+    If an AI suggestion points in the reverse direction of an existing
+    relationship, it is merged into that relationship instead of being
+    displayed as a second relationship.
+
+    Deterministic evidence wins the governed graph. AI can increase the
+    confidence/reasoning of a candidate but cannot create a duplicate edge.
+    """
+
+    by_key: dict[tuple, RelationshipCandidate] = {}
+
+    for rel in relationships:
+        key = _relationship_key(
+            rel.from_table,
+            rel.from_column,
+            rel.to_table,
+            rel.to_column,
+        )
+
+        existing = by_key.get(key)
+
+        if existing is None:
+            by_key[key] = rel
+            continue
+
+        # Keep the canonical deterministic relationship.
+        if (
+            existing.is_ai_suggested
+            and not rel.is_ai_suggested
+        ):
+            rel.reason = (
+                f"{rel.reason} "
+                f"AI independently supported this relationship."
+            )
+            by_key[key] = rel
+            continue
+
+        # If both are deterministic, retain the stronger evidence.
+        if (
+            not existing.is_ai_suggested
+            and not rel.is_ai_suggested
+        ):
+            if rel.confidence > existing.confidence:
+                by_key[key] = rel
+            continue
+
+        # If an AI candidate is the only evidence, retain it as an
+        # AI-reviewed suggestion. Do not silently turn it into a
+        # deterministic relationship.
+        if (
+            existing.is_ai_suggested
+            and rel.is_ai_suggested
+        ):
+            if rel.confidence > existing.confidence:
+                by_key[key] = rel
+            continue
+
+        # Existing deterministic + new AI:
+        # preserve deterministic confidence and annotate evidence.
+        if not existing.is_ai_suggested and rel.is_ai_suggested:
+            existing.reason = (
+                f"{existing.reason} "
+                f"AI independently supported this relationship "
+                f"({rel.confidence * 100:.0f}% AI confidence)."
+            )
+
+    return sorted(
+        by_key.values(),
+        key=lambda r: -r.confidence,
+    )
+
+
+_ID_TOKEN_PATTERN = re.compile(r'(^|[^a-z0-9])id([^a-z0-9]|$)', re.IGNORECASE)
 
 
 def _looks_like_id_column(col_name: str, dtype: str) -> bool:
-    if "float" in dtype:
-        return False
-    name_lower = col_name.lower()
-    return name_lower.endswith("id") or name_lower == "id"
+    """
+    Matches "id" as a whole word/token anywhere in the column name --
+    e.g. "id (pk)", "customer_id", "record-id#", "ID" -- rather than
+    only a plain endswith("id") check on the raw name (which misses
+    punctuation/annotation right after "id", like "id (pk)") or a fully
+    merged normalized string (which can accidentally join "id" with an
+    adjacent word, e.g. "id (pk)" -> "idpk", breaking a suffix check
+    just as badly in the opposite direction). A word-boundary match on
+    the original string avoids both failure modes.
+
+    Deliberately does NOT exclude float-typed columns. An earlier
+    version returned False for any float dtype, on the assumption that
+    id columns are always clean integers -- but pandas silently upcasts
+    an integer column to float the moment it contains even one null,
+    which is a very common, legitimate pattern for a NULLABLE foreign
+    key (e.g. manager_id where the top of an org chart has no manager,
+    or an optional promo_code_id). That earlier version made every such
+    column invisible to ID detection, letting it be proposed as an
+    AVG()/SUM() metric -- caught by testing a self-referencing
+    employee/manager hierarchy, a realistic case that surfaced this
+    immediately. The name-token match alone is a reliable enough
+    signal: a column genuinely named with "id" as a token is not a
+    legitimate continuous measure, whatever its pandas-inferred dtype.
+    """
+    return bool(_ID_TOKEN_PATTERN.search(col_name))
 
 
 CATEGORY_NAME_SIGNALS = [
@@ -258,6 +709,7 @@ def _looks_like_rating_or_category_column(col: ColumnProfile, row_count: int) ->
 NON_ADDITIVE_PATTERNS = [
     "rate", "ratio", "percent", "pct", "score", "average", "avg",
     "age", "temperature", "pressure", "index", "level",
+    "duration", "cycle_time", "response_time", "latency",
 ]
 
 
@@ -276,28 +728,221 @@ def _looks_non_additive(col_name: str) -> bool:
     return any(p in name_lower for p in NON_ADDITIVE_PATTERNS)
 
 
-def classify_tables(profiles: dict[str, TableProfile], relationships: list[RelationshipCandidate]) -> tuple[list[str], list[str]]:
-    fk_from_tables = {r.from_table for r in relationships}
-    pk_to_tables = {r.to_table for r in relationships}
 
-    facts, dimensions = [], []
+def _genuine_measure_columns(
+    profile: TableProfile,
+) -> list[ColumnProfile]:
+    numeric_cols = [
+        c for c in profile.columns
+        if (
+            "int" in c.dtype
+            or "float" in c.dtype
+        )
+    ]
+
+    return [
+        c
+        for c in numeric_cols
+        if not _looks_like_id_column(
+            c.name,
+            c.dtype,
+        )
+        and not _looks_like_rating_or_category_column(
+            c,
+            profile.row_count,
+        )
+    ]
+
+
+def _event_table_score(
+    profile: TableProfile,
+    incoming_count: int,
+    outgoing_count: int,
+) -> float:
+    """
+    Estimate whether a table behaves like a business event/fact.
+
+    This is intentionally domain-agnostic.
+
+    Signals:
+      - real numeric measures
+      - event/time columns
+      - incoming child rows
+      - multiple FK relationships
+      - row-level transaction/event structure
+
+    A lookup/master dimension usually has descriptive columns and a
+    unique key but few/no measures. A child event table such as Defects
+    can therefore remain a FACT even though Production Runs references
+    it or vice versa.
+    """
+
+    score = 0.0
+
+    measures = _genuine_measure_columns(profile)
+
+    if measures:
+        score += 0.45
+
+    lower_names = {
+        c.name.lower()
+        for c in profile.columns
+    }
+
+    event_signals = (
+        "date",
+        "time",
+        "timestamp",
+        "start",
+        "end",
+        "duration",
+        "quantity",
+        "amount",
+        "cost",
+        "value",
+        "count",
+        "rate",
+        "severity",
+        "defect",
+        "status",
+        "result",
+        "event",
+        "run",
+        "maintenance",
+    )
+
+    if any(
+        any(token in name for token in event_signals)
+        for name in lower_names
+    ):
+        score += 0.20
+
+    if incoming_count > 0:
+        score += 0.10
+
+    if outgoing_count > 0:
+        score += min(
+            0.20,
+            0.10 * outgoing_count,
+        )
+
+    # Very small master/lookup tables with a highly unique ID and no
+    # measures should remain dimensions.
+    if (
+        profile.row_count > 0
+        and measures == []
+    ):
+        score -= 0.30
+
+    return max(
+        0.0,
+        min(1.0, score),
+    )
+
+
+def classify_tables(
+    profiles: dict[str, TableProfile],
+    relationships: list[RelationshipCandidate],
+) -> tuple[list[str], list[str]]:
+    """
+    Domain-agnostic fact/dimension/entity-role inference.
+
+    Previous behavior:
+        "If another table references this table => DIMENSION"
+
+    That is too simplistic for manufacturing and other multi-fact
+    domains. A Defects table can be a fact/event table even though it
+    participates in a relationship with Production Runs.
+
+    New behavior:
+      1. Build incoming/outgoing relationship counts.
+      2. Detect genuine measures.
+      3. Score event/fact behavior.
+      4. Classify descriptive lookup/master tables as dimensions.
+      5. Allow multiple FACT tables in the same domain.
+      6. Preserve shared dimensions such as Machine and Plant.
+    """
+
+    incoming: dict[str, int] = {
+        name: 0 for name in profiles
+    }
+
+    outgoing: dict[str, int] = {
+        name: 0 for name in profiles
+    }
+
+    for rel in relationships:
+        if rel.from_table == rel.to_table:
+            continue
+
+        outgoing[rel.from_table] += 1
+        incoming[rel.to_table] += 1
+
+    facts: list[str] = []
+    dimensions: list[str] = []
+
     for name, profile in profiles.items():
-        if name in pk_to_tables:
+
+        measures = _genuine_measure_columns(
+            profile
+        )
+
+        score = _event_table_score(
+            profile,
+            incoming_count=incoming[name],
+            outgoing_count=outgoing[name],
+        )
+
+        has_fk = outgoing[name] > 0
+        is_master_like = (
+            profile.row_count > 0
+            and any(
+                c.uniqueness_ratio >= 0.95
+                and _looks_like_id_column(
+                    c.name,
+                    c.dtype,
+                )
+                for c in profile.columns
+            )
+            and not measures
+        )
+
+        # Strong dimension signal:
+        # unique identifier + descriptive attributes + no real measures.
+        if is_master_like:
             dimensions.append(name)
             continue
 
-        numeric_cols = [c for c in profile.columns if "int" in c.dtype or "float" in c.dtype]
-        genuine_measures = [
-            c for c in numeric_cols
-            if not _looks_like_id_column(c.name, c.dtype)
-            and not _looks_like_rating_or_category_column(c, profile.row_count)
-        ]
-        has_outgoing_fk = name in fk_from_tables
-
-        if has_outgoing_fk and len(genuine_measures) >= 1:
+        # Strong fact/event signal:
+        # real measures plus at least one relationship, or a strongly
+        # event-shaped standalone table.
+        if (
+            measures
+            and (
+                has_fk
+                or incoming[name] > 0
+                or score >= 0.55
+            )
+        ):
             facts.append(name)
-        else:
-            dimensions.append(name)
+            continue
+
+        # A table with a FK and measures is a fact even if another
+        # fact/event table points to it.
+        if measures and has_fk:
+            facts.append(name)
+            continue
+
+        dimensions.append(name)
+
+    # A completely standalone table with measures is a fact.
+    if len(profiles) == 1:
+        only_name = next(iter(profiles))
+        if _genuine_measure_columns(
+            profiles[only_name]
+        ):
+            facts = [only_name]
+            dimensions = []
 
     return facts, dimensions
 
@@ -306,9 +951,21 @@ def generate_metrics(model_tables: dict[str, TableProfile], facts: list[str], re
     metrics = []
     for fact_name in facts:
         profile = model_tables[fact_name]
+        if profile.row_count == 0:
+            # No rows means no real aggregate to compute -- a SUM/AVG/
+            # COUNT metric over an empty table is not a genuine business
+            # metric, just a placeholder that would render a blank or
+            # misleading KPI card. Skip metric generation for this fact
+            # entirely rather than propose hollow metrics.
+            continue
         related_fk_cols = {r.from_column for r in relationships if r.from_table == fact_name}
         for c in profile.columns:
             if c.name in related_fk_cols:
+                continue
+            if c.null_pct >= 100.0:
+                # Every value is null -- there is nothing to sum or
+                # average, and proposing this as a metric would always
+                # render as a blank/zero KPI card with no real meaning.
                 continue
             is_id = _looks_like_id_column(c.name, c.dtype)
             is_rating = _looks_like_rating_or_category_column(c, profile.row_count)
