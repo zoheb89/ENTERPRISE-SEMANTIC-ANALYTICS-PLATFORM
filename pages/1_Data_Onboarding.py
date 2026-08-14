@@ -272,11 +272,14 @@ with st.container(border=True):
             ["GET", "POST"],
             key="api_method",
         )
+        # Streamlit's st.text_area does not support type="password".
+        # Keep this as a multiline JSON field because APIs may require
+        # multiple headers. Do not log or display the entered header value.
         headers = st.text_area(
             "Headers JSON (optional)",
             key="api_headers",
             placeholder='{"Authorization":"Bearer <token>"}',
-            type="password",
+            help="Optional HTTP headers as JSON. Credentials are used only for the request and are not displayed by INVENT.",
         )
         body = st.text_area(
             "Request body JSON (POST only, optional)",

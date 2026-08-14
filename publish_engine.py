@@ -323,6 +323,15 @@ def publish_domain(
     # IMPORTANT: Genie is configured once per domain with the COMPLETE
     # governed Metric View set. The primary fact is only the default
     # analytics entry point; it must never become the only Genie source.
+    #
+    # Keep the selected primary fact first for deterministic ordering, then
+    # include every other governed fact. This list must be created here
+    # because Metric Views have just been generated above.
+    ordered_facts = [fact_table] + [
+        fact for fact in model.facts
+        if fact != fact_table
+    ]
+
     all_metric_view_names = [
         metric_views[f]["metric_view"]
         for f in ordered_facts

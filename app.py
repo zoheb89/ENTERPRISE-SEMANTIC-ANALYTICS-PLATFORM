@@ -26,4 +26,16 @@ pg = st.navigation(
         "Govern": [security],
     }
 )
+
+# INVENT startup behavior:
+# A brand-new browser/session load always starts at Home, even if the browser
+# restores a deep-link URL such as /Business_Model. Once the user has entered
+# the application, normal Streamlit navigation is preserved.
+#
+# This is intentionally session-scoped: clicking between INVENT pages does not
+# bounce the user back to Home, while a fresh/rebooted session gets the Home page.
+if "_invent_session_booted" not in st.session_state:
+    st.session_state["_invent_session_booted"] = True
+    st.switch_page("pages/0_Home.py")
+
 pg.run()
