@@ -80,7 +80,11 @@ st.markdown(
     f"""
     **Domain:** `{entry.domain_name}`
 
-    **Metric View:** `{entry.metric_view}`
+    **Primary Metric View:** `{entry.metric_view}`
+
+    **Governed Metric Views:** {", ".join(entry.metric_views or [entry.metric_view])}
+
+    **Genie status:** `{entry.genie_status}`
 
     **Measures:** {", ".join(entry.measures) or "None"}
 
@@ -105,7 +109,8 @@ st.markdown(
 )
 
 st.caption(
-    "Genie uses the domain's published Metric View and its governed "
+    "Genie uses all governed Metric Views published for this domain and "
+    "their governed metadata to translate natural-language questions into "
     "metadata to translate natural-language questions into Databricks "
     "analytics."
 )

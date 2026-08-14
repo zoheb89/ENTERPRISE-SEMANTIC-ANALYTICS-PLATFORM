@@ -36,6 +36,8 @@ class RegistryEntry:
     row_count: int
     published_at: str
     genie_space_id: str | None = None
+    genie_status: str = "not_configured"
+    metric_views: list | None = None
 
 
 def _registry_table() -> str:
@@ -74,7 +76,9 @@ def ensure_registry_exists():
                     default_kpi STRING,
                     row_count BIGINT,
                     published_at STRING,
-                    genie_space_id STRING
+                    genie_space_id STRING,
+                    genie_status STRING,
+                    metric_views_json STRING
                 )
                 USING DELTA
                 """
@@ -95,6 +99,22 @@ def ensure_registry_exists():
                     f"""
                     ALTER TABLE {full_table}
                     ADD COLUMNS (genie_space_id STRING)
+                    """
+                )
+
+            if "genie_status" not in columns:
+                cur.execute(
+                    f"""
+                    ALTER TABLE {full_table}
+                    ADD COLUMNS (genie_status STRING)
+                    """
+                )
+
+            if "metric_views_json" not in columns:
+                cur.execute(
+                    f"""
+                    ALTER TABLE {full_table}
+                    ADD COLUMNS (metric_views_json STRING)
                     """
                 )
 
@@ -119,6 +139,12 @@ def register_domain(entry: RegistryEntry):
 
     dimensions_json = json.dumps(
         entry.dimensions,
+        ensure_ascii=False,
+        default=str,
+    )
+
+    metric_views_json = json.dumps(
+        entry.metric_views or [entry.metric_view],
         ensure_ascii=False,
         default=str,
     )
@@ -148,9 +174,11 @@ def register_domain(entry: RegistryEntry):
                     default_kpi,
                     row_count,
                     published_at,
-                    genie_space_id
+                    genie_space_id,
+                    genie_status,
+                    metric_views_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.domain_name,
@@ -164,6 +192,8 @@ def register_domain(entry: RegistryEntry):
                     int(entry.row_count),
                     entry.published_at,
                     entry.genie_space_id,
+                    entry.genie_status,
+                    metric_views_json,
                 ),
             )
 
@@ -197,7 +227,9 @@ def list_domains() -> list[RegistryEntry]:
                         default_kpi,
                         row_count,
                         published_at,
-                        genie_space_id
+                        genie_space_id,
+                        genie_status,
+                        metric_views_json
                     FROM {full_table}
                     ORDER BY published_at DESC
                     """
@@ -221,6 +253,8 @@ def list_domains() -> list[RegistryEntry]:
                 row_count,
                 published_at,
                 genie_space_id,
+                genie_status,
+                metric_views_json,
             ) = row
 
             try:
@@ -237,6 +271,13 @@ def list_domains() -> list[RegistryEntry]:
             except Exception:
                 dimensions = []
 
+            try:
+                metric_views = json.loads(
+                    metric_views_json or "[]"
+                )
+            except Exception:
+                metric_views = [metric_view] if metric_view else []
+
             entries.append(
                 RegistryEntry(
                     domain_name=domain_name,
@@ -250,6 +291,8 @@ def list_domains() -> list[RegistryEntry]:
                     row_count=int(row_count or 0),
                     published_at=published_at,
                     genie_space_id=genie_space_id or None,
+                    genie_status=genie_status or "not_configured",
+                    metric_views=metric_views or [metric_view],
                 )
             )
 

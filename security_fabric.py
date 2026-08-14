@@ -293,23 +293,35 @@ def _genie_auto_create_enabled() -> bool:
         return True
 
 
-def _is_valid_genie_agent_id(
-    value: str | None,
-) -> bool:
+def _normalize_genie_agent_id(value: str | None) -> str | None:
+    """Normalize a Genie Agent/Space identifier without changing its identity.
+
+    Current Agent Mode IDs are commonly exposed as 32-character lowercase
+    hexadecimal strings. Workspace Genie management APIs also document the
+    space identifier as a UUID. Accept both representations so a copied
+    Genie URL does not get rejected merely because it contains UUID hyphens.
     """
-    Current Genie Agent IDs are 32-character lowercase hexadecimal IDs.
-    """
-    if not value:
-        return False
+    if value is None:
+        return None
+
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
 
     import re
+    import uuid
 
-    return bool(
-        re.fullmatch(
-            r"[0-9a-f]{32}",
-            str(value).strip(),
-        )
-    )
+    if re.fullmatch(r"[0-9a-fA-F]{32}", cleaned):
+        return cleaned.lower()
+
+    try:
+        return str(uuid.UUID(cleaned))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _is_valid_genie_agent_id(value: str | None) -> bool:
+    return _normalize_genie_agent_id(value) is not None
 
 
 def _genie_headers() -> dict[str, str]:
@@ -341,7 +353,7 @@ def _new_genie_item_id() -> str:
 
 def _merge_genie_serialized_space(
     serialized_space: str,
-    metric_view_full_name: str,
+    metric_view_full_name: str | list[str],
     domain_name: str,
     measures: list[str] | None = None,
     dimensions: list[str] | None = None,
@@ -360,6 +372,18 @@ def _merge_genie_serialized_space(
         raise RuntimeError(
             "Genie serialized_space is not a JSON object."
         )
+
+    # Normalize to a unique, deterministic domain-level list.
+    metric_view_names = (
+        [metric_view_full_name]
+        if isinstance(metric_view_full_name, str)
+        else list(metric_view_full_name or [])
+    )
+    metric_view_names = list(dict.fromkeys(
+        str(v).strip() for v in metric_view_names if str(v).strip()
+    ))
+    if not metric_view_names:
+        raise RuntimeError("At least one governed Metric View is required for Genie.")
 
     config.setdefault("version", 2)
     config.setdefault("config", {})
@@ -386,18 +410,20 @@ def _merge_genie_serialized_space(
         if isinstance(item, dict)
     }
 
-    if metric_view_full_name not in existing_metric_ids:
-        metric_views.append(
-            {
-                "identifier": metric_view_full_name,
-                "description": [
-                    (
-                        f"INVENT governed semantic Metric View "
-                        f"for the {domain_name} domain."
-                    )
-                ],
-            }
-        )
+    for metric_view_name in metric_view_names:
+        if metric_view_name not in existing_metric_ids:
+            metric_views.append(
+                {
+                    "identifier": metric_view_name,
+                    "description": [
+                        (
+                            f"INVENT governed semantic Metric View "
+                            f"for the {domain_name} domain."
+                        )
+                    ],
+                }
+            )
+            existing_metric_ids.add(metric_view_name)
 
     # Sample questions
     questions = config["config"].setdefault(
@@ -456,9 +482,10 @@ def _merge_genie_serialized_space(
         )
 
     instruction = (
-        "INVENT governed semantic model: use the published Metric View "
-        f"{metric_view_full_name} as the primary analytical source for "
-        f"the {domain_name} domain. Prefer its defined measures and "
+        "INVENT governed semantic model: use the published Metric Views "
+        f"{', '.join(metric_view_names)} for the {domain_name} domain. "
+        "Use the Metric View that best matches the user's question and "
+        "prefer its defined measures and dimensions. "
         "dimensions. Do not invent alternative metric definitions. "
         "For Metric View measures, use MEASURE() when generating SQL. "
         "Do not bypass the governed semantic layer with raw-table joins "
@@ -490,7 +517,7 @@ def _merge_genie_serialized_space(
 
 def _update_existing_genie_agent(
     space_id: str,
-    metric_view_full_name: str,
+    metric_view_full_name: str | list[str],
     domain_name: str,
     measures: list[str] | None,
     dimensions: list[str] | None,
@@ -553,12 +580,12 @@ def _update_existing_genie_agent(
 
         return SecurityAction(
             action="Genie Agent",
-            target=metric_view_full_name,
+            target=", ".join(metric_view_names),
             principal=f"genie-space:{space_id}",
             status="success",
             detail=(
-                f"Metric View registered in Genie Agent "
-                f"{space_id} for domain '{domain_name}'."
+                f"Configured {len(metric_view_names)} governed Metric View(s) "
+                f"in Genie Agent {space_id} for domain '{domain_name}'."
             ),
         )
 
@@ -597,7 +624,7 @@ def _update_existing_genie_agent(
 
 
 def _create_genie_agent(
-    metric_view_full_name: str,
+    metric_view_full_name: str | list[str],
     domain_name: str,
     measures: list[str] | None,
     dimensions: list[str] | None,
@@ -672,7 +699,11 @@ def _create_genie_agent(
             str(space_id),
             SecurityAction(
                 action="Genie Agent",
-                target=metric_view_full_name,
+                target=(
+                    ", ".join(metric_view_full_name)
+                    if isinstance(metric_view_full_name, list)
+                    else metric_view_full_name
+                ),
                 principal=f"genie-space:{space_id}",
                 status="success",
                 detail=(
@@ -719,6 +750,81 @@ def _create_genie_agent(
                 detail=str(exc),
             ),
         )
+
+
+
+def register_domain_with_genie_space(
+    space_id: str | None,
+    domain_name: str,
+    metric_views: list[str],
+    measures: list[str] | None = None,
+    dimensions: list[str] | None = None,
+    sample_questions: list[str] | None = None,
+) -> tuple[str | None, SecurityAction]:
+    """Configure the complete governed Metric View set for one domain.
+
+    This is intentionally one Genie UpdateSpace operation per domain.
+    INVENT must never leave Genie containing only the last fact processed.
+    """
+    names = list(dict.fromkeys(
+        str(v).strip() for v in (metric_views or []) if str(v).strip()
+    ))
+    if not names:
+        return None, SecurityAction(
+            action="Genie Agent",
+            target=domain_name,
+            principal="none",
+            status="failed",
+            detail="No governed Metric Views were supplied for the domain.",
+        )
+
+    resolved = (
+        _normalize_genie_agent_id(space_id)
+        if space_id
+        else None
+    )
+
+    if space_id and not resolved:
+        return None, SecurityAction(
+            action="Genie Agent",
+            target=", ".join(names),
+            principal=f"genie-space:{space_id}",
+            status="failed",
+            detail=(
+                "Configured Genie Agent ID is invalid. "
+                "Copy the current ID from the Databricks Genie Agent URL."
+            ),
+        )
+
+    if resolved:
+        return resolved, _update_existing_genie_agent(
+            resolved,
+            names,
+            domain_name,
+            measures,
+            dimensions,
+            sample_questions,
+        )
+
+    if _genie_auto_create_enabled():
+        return _create_genie_agent(
+            names,
+            domain_name,
+            measures,
+            dimensions,
+            sample_questions,
+        )
+
+    return None, SecurityAction(
+        action="Genie Agent",
+        target=", ".join(names),
+        principal="none",
+        status="failed",
+        detail=(
+            "No Genie Agent is mapped to this domain and "
+            "GENIE_AUTO_CREATE is disabled."
+        ),
+    )
 
 
 def record_genie_not_configured(
@@ -768,9 +874,8 @@ def register_table_with_genie_space(
         )
 
     if space_id:
-        if not _is_valid_genie_agent_id(
-            space_id
-        ):
+        normalized_space_id = _normalize_genie_agent_id(space_id)
+        if not normalized_space_id:
             return (
                 None,
                 SecurityAction(
@@ -779,16 +884,16 @@ def register_table_with_genie_space(
                     principal=f"genie-space:{space_id}",
                     status="failed",
                     detail=(
-                        "Invalid Genie Agent ID. Current Databricks "
-                        "Agent IDs are 32-character lowercase hexadecimal "
-                        "values. Replace the configured ID with the ID "
-                        "shown in the Genie Agent URL."
+                        "Configured Genie Agent ID is not a valid 32-character "
+                        "hexadecimal Agent ID or UUID. "
+                        f"Received: {space_id!r}. "
+                        "Copy the ID from the Databricks Genie Agent URL."
                     ),
                 ),
             )
 
         action = _update_existing_genie_agent(
-            space_id,
+            normalized_space_id,
             metric_view,
             domain_name or "domain",
             measures,
@@ -796,7 +901,7 @@ def register_table_with_genie_space(
             sample_questions,
         )
         return (
-            space_id
+            normalized_space_id
             if action.status == "success"
             else None,
             action,

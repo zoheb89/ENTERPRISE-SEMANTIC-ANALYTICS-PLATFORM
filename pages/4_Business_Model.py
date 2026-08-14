@@ -307,7 +307,7 @@ with st.container(border=True):
     elif not model.facts:
         st.warning("No fact table identified — nothing to publish yet.")
     else:
-        fact_choice = st.selectbox("Fact table to publish", model.facts)
+        fact_choice = st.selectbox("Primary Fact / Default Analytics", model.facts)
 
         if model.pii_findings:
             st.markdown(
@@ -339,6 +339,11 @@ with st.container(border=True):
                         row_count=model.tables[fact_choice].row_count,
                         published_at=datetime.datetime.utcnow().isoformat(),
                         genie_space_id=result.get("genie_space_id"),
+                        genie_status=result.get("genie_status", "not_configured"),
+                        metric_views=[
+                            mv["metric_view"]
+                            for mv in result.get("metric_views", {}).values()
+                        ],
                     ))
 
                     st.session_state.last_published_domain = model.domain_name
@@ -373,7 +378,9 @@ with st.container(border=True):
                             if a.status == "failed"
                         ]
 
-                        if successful_genie:
+                        genie_status = result.get("genie_status", "not_configured")
+
+                        if genie_status == "connected":
                             st.markdown(
                                 "🧞 **Genie Agent connected**"
                             )
@@ -382,19 +389,42 @@ with st.container(border=True):
                                     f"Domain Genie Agent: "
                                     f"`{result['genie_space_id']}`"
                                 )
+                            st.caption(
+                                f"Configured {len(successful_genie)}/{len(genie_actions)} "
+                                "Genie registration action(s)."
+                            )
 
-                        if failed_genie:
-                            st.warning(
-                                "Genie Agent could not be configured. "
-                                "The semantic publish succeeded; review "
-                                "the Genie permissions/configuration."
+                        elif genie_status == "failed":
+                            st.error(
+                                "🧞 **Genie Agent configuration failed**"
+                            )
+                            if result.get("genie_space_id"):
+                                st.caption(
+                                    f"Genie Agent ID: `{result['genie_space_id']}`"
+                                )
+                            st.caption(
+                                "The semantic publication succeeded, but Genie "
+                                "is not marked connected until every required "
+                                "Metric View registration succeeds."
                             )
                             for action in failed_genie:
-                                st.caption(action.detail)
+                                st.code(action.detail, language="text")
 
-                        if not successful_genie and not failed_genie:
+                        elif genie_status == "pending":
+                            st.warning(
+                                "🧞 **Genie Agent partially configured**"
+                            )
+                            st.caption(
+                                f"{len(successful_genie)}/{len(genie_actions)} "
+                                "registration actions succeeded. Genie is not "
+                                "marked connected yet."
+                            )
+                            for action in failed_genie:
+                                st.code(action.detail, language="text")
+
+                        else:
                             st.info(
-                                "Genie Agent was not configured for this domain."
+                                "🧞 Genie Agent was not configured for this domain."
                             )
 
                     if other_actions:

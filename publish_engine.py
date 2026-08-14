@@ -320,67 +320,78 @@ def publish_domain(
         )
     )
 
-    ordered_facts = [
-        fact_table
-    ] + [
-        f
-        for f in model.facts
-        if f != fact_table
+    # IMPORTANT: Genie is configured once per domain with the COMPLETE
+    # governed Metric View set. The primary fact is only the default
+    # analytics entry point; it must never become the only Genie source.
+    all_metric_view_names = [
+        metric_views[f]["metric_view"]
+        for f in ordered_facts
+        if f in metric_views
     ]
 
-    first_genie_action = None
-
+    all_measures = []
+    all_dimensions = []
     for current_fact in ordered_facts:
-
         mv = metric_views[current_fact]
+        all_measures.extend(mv.get("measures", []))
+        all_dimensions.extend(mv.get("dimensions", []))
 
-        sample_questions = [
-            f"What are the key KPIs for {model.domain_name}?",
-            (
-                f"Show {mv['measures'][0]} by "
-                f"the main business dimensions."
-                if mv["measures"]
-                else (
-                    f"Show the main trends for "
-                    f"{model.domain_name}."
-                )
-            ),
-        ]
+    all_measures = list(dict.fromkeys(all_measures))
+    all_dimensions = list(dict.fromkeys(all_dimensions))
 
-        resolved_space_id, action = (
-            security.register_table_with_genie_space(
-                resolved_space_id,
-                table_full_name=(
-                    f"{catalog}.{schema}."
-                    f"{_sanitize_identifier(current_fact)}"
-                ),
-                metric_view_full_name=mv[
-                    "metric_view"
-                ],
-                domain_name=model.domain_name,
-                measures=mv["measures"],
-                dimensions=mv["dimensions"],
-                sample_questions=sample_questions,
-            )
+    sample_questions = [
+        f"What are the key KPIs for {model.domain_name}?",
+        f"Which metrics are available across the {model.domain_name} domain?",
+        f"Show the main business trends for {model.domain_name}.",
+    ]
+
+    resolved_space_id, domain_genie_action = (
+        security.register_domain_with_genie_space(
+            resolved_space_id,
+            domain_name=model.domain_name,
+            metric_views=all_metric_view_names,
+            measures=all_measures,
+            dimensions=all_dimensions,
+            sample_questions=sample_questions,
         )
+    )
 
-        security_actions.append(action)
+    security_actions.append(domain_genie_action)
 
-        if first_genie_action is None:
-            first_genie_action = action
-
-    # If no facts were present this would have failed earlier, but keep
-    # the result deterministic.
-    if first_genie_action is None:
+    # No valid Metric Views means there is nothing to configure in Genie.
+    if not all_metric_view_names:
         security_actions.append(
-            security.record_genie_not_configured(
-                model.domain_name
-            )
+            security.record_genie_not_configured(model.domain_name)
         )
 
     primary = metric_views[
         fact_table
     ]
+
+    genie_actions = [
+        a for a in security_actions
+        if a.action == "Genie Agent"
+    ]
+    genie_successes = [
+        a for a in genie_actions
+        if a.status == "success"
+    ]
+    genie_failures = [
+        a for a in genie_actions
+        if a.status == "failed"
+    ]
+
+    # A domain is "Genie connected" only when every required Metric View
+    # registration succeeded. A single successful registration must not
+    # produce a misleading connected banner when another fact/MV failed.
+    if not genie_actions:
+        genie_status = "not_configured"
+    elif genie_failures:
+        genie_status = "failed"
+    elif len(genie_successes) == len(genie_actions):
+        genie_status = "connected"
+    else:
+        genie_status = "pending"
 
     return {
         "catalog": catalog,
@@ -391,5 +402,9 @@ def publish_domain(
         "measures": primary["measures"],
         "dimensions": primary["dimensions"],
         "genie_space_id": resolved_space_id,
+        "genie_status": genie_status,
+        "genie_actions_total": len(genie_actions),
+        "genie_actions_succeeded": len(genie_successes),
+        "genie_actions_failed": len(genie_failures),
         "security_actions": security_actions,
     }

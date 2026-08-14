@@ -1,37 +1,32 @@
-# INVENT QA Result
+# INVENT v3 Production-Ready QA Result
 
-## Automated local regression
+## Local automated validation
 
-**Status: PASS**
+**PASS**
 
-The bundled demo suite was executed through the metadata-driven semantic
-engine and Python compilation checks.
+- 10 bundled demo domains passed semantic regression.
+- Manufacturing topology regression passed.
+- Travel alternate-key regression passed.
+- Python compilation passed for all application Python files.
+- Connector engine compiles and SQLite connector smoke test passed.
 
-| Domain | Tables | Relationships | Facts | Dimensions | Metrics |
-|---|---:|---:|---:|---:|---:|
-| Automotive | 6 | 6 | 2 | 4 | 6 |
-| Banking | 6 | 5 | 3 | 3 | 6 |
-| Energy | 6 | 6 | 2 | 4 | 6 |
-| Healthcare | 5 | 4 | 2 | 3 | 7 |
-| HR | 6 | 6 | 2 | 4 | 7 |
-| Insurance | 6 | 6 | 3 | 3 | 6 |
-| Manufacturing | 6 | 6 | 3 | 3 | 11 |
-| Retail | 6 | 5 | 3 | 3 | 8 |
-| Telecom | 6 | 7 | 3 | 3 | 8 |
-| Travel | 6 | 4 | 3 | 3 | 6 |
+## Genie hardening
 
-Additional regressions:
+- Genie ID validation accepts current 32-character hexadecimal Agent IDs and UUID-form IDs.
+- IDs are normalized before API calls.
+- Publish no longer reports Genie as connected when only a subset of Metric View registrations succeeded.
+- Registry stores `genie_status`.
+- Delta/Metric View publication remains independent from optional Genie provisioning failures.
 
-- Manufacturing shared-dimension topology: PASS
-- Travel alternate-key relationship: PASS
-- Python compilation: PASS (23 files)
+## Live validation boundary
 
-## Runtime QA
+The local suite does not claim that a real Databricks Genie Agent was created or
+updated because that requires the target workspace, SQL Warehouse, PAT/identity,
+Genie permissions, and feature availability.
 
-The application now runs `qa_engine.run_qa()` after semantic analysis and
-before every publication attempt. Blocking failures disable Publish.
-
-The QA page is available as **QA & Validation** in the INVENT navigation.
-
-A live Databricks smoke test is intentionally not represented as passed
-without the target workspace credentials and permissions.
+After deployment, perform one real smoke test:
+1. Publish a new domain.
+2. Confirm Delta tables and Metric View.
+3. Confirm Genie status is `connected`.
+4. Open the domain Genie Agent.
+5. Ask a question against the published Metric View.
