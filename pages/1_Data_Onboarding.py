@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from pathlib import Path
 
 from theme import inject_base_css, render_sidebar_brand, page_header
+from data_engine import load_uploaded_files, prepare_files, source_capabilities
 
 
 inject_base_css()
@@ -48,205 +50,65 @@ if "onboarding_upload_domain" not in st.session_state:
 # SAMPLE DATA
 # =============================================================================
 
-def load_sample_domain(choice: str) -> dict:
-    """
-    Generate deterministic sample data for the selected domain.
 
-    IMPORTANT:
-    The selected sample domain is authoritative. The previous domain
-    must never be reused when the user changes the sample selector.
-    """
+DEMO_DATA_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "demo_datasets"
+)
 
-    rng = np.random.default_rng(11)
 
-    if choice == "Healthcare":
-        hospitals = pd.DataFrame(
-            {
-                "hospital_id": range(1, 6),
-                "hospital_name": [
-                    f"Hospital {c}" for c in "ABCDE"
-                ],
-            }
+@st.cache_data(show_spinner=False)
+def available_demo_domains() -> list[str]:
+    if not DEMO_DATA_DIR.exists():
+        return []
+
+    return sorted(
+        p.name
+        for p in DEMO_DATA_DIR.iterdir()
+        if p.is_dir()
+        and not p.name.startswith(".")
+        and any(
+            f.is_file()
+            and f.suffix.lower() == ".csv"
+            for f in p.iterdir()
         )
-
-        doctors = pd.DataFrame(
-            {
-                "doctor_id": range(1, 26),
-                "doctor_name": [
-                    f"Dr. {i}" for i in range(1, 26)
-                ],
-                "hospital_id": rng.integers(
-                    1,
-                    6,
-                    25,
-                ),
-            }
-        )
-
-        patients = pd.DataFrame(
-            {
-                "patient_id": range(1, 201),
-                "patient_name": [
-                    f"Patient {i}" for i in range(1, 201)
-                ],
-            }
-        )
-
-        encounters = pd.DataFrame(
-            {
-                "encounter_id": range(1, 601),
-                "patient_id": rng.integers(
-                    1,
-                    201,
-                    600,
-                ),
-                "doctor_id": rng.integers(
-                    1,
-                    26,
-                    600,
-                ),
-                "heart_rate": rng.integers(
-                    60,
-                    130,
-                    600,
-                ),
-                "length_of_stay_days": rng.integers(
-                    1,
-                    12,
-                    600,
-                ),
-            }
-        )
-
-        return {
-            "Hospitals.csv": hospitals,
-            "Doctors.csv": doctors,
-            "Patients.csv": patients,
-            "Encounters.csv": encounters,
-        }
-
-    if choice == "Finance":
-        dept = pd.DataFrame(
-            {
-                "department_id": range(1, 8),
-                "department_name": [
-                    "Sales",
-                    "Marketing",
-                    "Engineering",
-                    "Ops",
-                    "Finance",
-                    "HR",
-                    "Legal",
-                ],
-            }
-        )
-
-        cc = pd.DataFrame(
-            {
-                "cost_center_id": range(1, 8),
-                "cost_center_name": [
-                    f"CC-{i}" for i in range(1, 8)
-                ],
-                "department_id": range(1, 8),
-            }
-        )
-
-        gl = pd.DataFrame(
-            {
-                "gl_id": range(1, 501),
-                "cost_center_id": rng.integers(
-                    1,
-                    8,
-                    500,
-                ),
-                "expense_amount": rng.uniform(
-                    500,
-                    50000,
-                    500,
-                ).round(2),
-                "revenue_amount": rng.uniform(
-                    0,
-                    80000,
-                    500,
-                ).round(2),
-            }
-        )
-
-        return {
-            "Department.csv": dept,
-            "CostCenter.csv": cc,
-            "GL.csv": gl,
-        }
-
-    if choice == "Retail":
-        stores = pd.DataFrame(
-            {
-                "store_id": range(1, 11),
-                "store_name": [
-                    f"Store {i}" for i in range(1, 11)
-                ],
-            }
-        )
-
-        products = pd.DataFrame(
-            {
-                "product_id": range(1, 31),
-                "product_name": [
-                    f"Product {i}" for i in range(1, 31)
-                ],
-            }
-        )
-
-        customers = pd.DataFrame(
-            {
-                "customer_id": range(1, 301),
-                "customer_name": [
-                    f"Customer {i}" for i in range(1, 301)
-                ],
-            }
-        )
-
-        orders = pd.DataFrame(
-            {
-                "order_id": range(1, 1001),
-                "customer_id": rng.integers(
-                    1,
-                    301,
-                    1000,
-                ),
-                "product_id": rng.integers(
-                    1,
-                    31,
-                    1000,
-                ),
-                "store_id": rng.integers(
-                    1,
-                    11,
-                    1000,
-                ),
-                "order_value": rng.uniform(
-                    15,
-                    800,
-                    1000,
-                ).round(2),
-                "quantity": rng.integers(
-                    1,
-                    8,
-                    1000,
-                ),
-            }
-        )
-
-        return {
-            "Store.csv": stores,
-            "Product.csv": products,
-            "Customer.csv": customers,
-            "Orders.csv": orders,
-        }
-
-    raise ValueError(
-        f"Unsupported sample domain: {choice}"
     )
+
+
+@st.cache_data(show_spinner=False)
+def load_sample_domain(choice: str) -> dict[str, pd.DataFrame]:
+    """
+    Load the checked-in demo dataset for the selected domain.
+
+    The selected domain is the sole source of truth. There is no
+    domain-specific Python model and no previous-domain fallback.
+    """
+    domain_dir = DEMO_DATA_DIR / choice.lower()
+
+    if not domain_dir.exists():
+        raise ValueError(
+            f"Demo domain '{choice}' is not available."
+        )
+
+    files = {}
+
+    for path in sorted(
+        domain_dir.iterdir()
+    ):
+        if (
+            path.is_file()
+            and path.suffix.lower() == ".csv"
+        ):
+            files[path.name] = pd.read_csv(
+                path
+            )
+
+    if not files:
+        raise ValueError(
+            f"Demo domain '{choice}' contains no CSV files."
+        )
+
+    return files
 
 
 # =============================================================================
@@ -306,10 +168,8 @@ with st.container(border=True):
 
         sample_choice = st.selectbox(
             "Sample domain",
-            [
+            available_demo_domains() or [
                 "Healthcare",
-                "Finance",
-                "Retail",
             ],
             key="onboarding_sample_domain",
         )
@@ -350,34 +210,31 @@ with st.container(border=True):
         selected_domain = domain_input.strip()
 
         uploaded = st.file_uploader(
-            "Upload CSV or Excel files",
+            "Upload tabular data",
             type=[
                 "csv",
                 "xlsx",
                 "xls",
+                "json",
+                "parquet",
             ],
             accept_multiple_files=True,
             key="onboarding_uploaded_files",
         )
 
         if uploaded:
-
-            for f in uploaded:
-
-                try:
-
-                    if f.name.lower().endswith(
-                        ".csv"
-                    ):
-                        files[f.name] = pd.read_csv(f)
-                    else:
-                        files[f.name] = pd.read_excel(f)
-
-                except Exception as exc:
-
-                    st.error(
-                        f"Couldn't read {f.name}: {exc}"
-                    )
+            try:
+                files = prepare_files(
+                    load_uploaded_files(uploaded)
+                )
+                st.caption(
+                    f"{len(files)} file(s) loaded. "
+                    "Supported: CSV, Excel, JSON, Parquet."
+                )
+            except Exception as exc:
+                st.error(
+                    f"Couldn't load the selected files: {exc}"
+                )
 
     st.markdown(
         "<br>",
@@ -433,37 +290,4 @@ if go:
     )
 
 
-# =============================================================================
-# START ANALYSIS
-# =============================================================================
 
-if go:
-
-    # -------------------------------------------------------------------------
-    # CRITICAL FIX:
-    #
-    # Never allow the previous domain's semantic model to survive into the
-    # next analysis run.
-    #
-    # The model is rebuilt entirely from the files selected in THIS run.
-    # -------------------------------------------------------------------------
-
-    st.session_state.model = None
-    st.session_state.llm_suggestion_count = 0
-
-    # Make a clean copy of the current files.
-    st.session_state.uploaded_files = {
-        name: dataframe.copy()
-        for name, dataframe in files.items()
-    }
-
-    # Keep the current domain exactly as selected.
-    st.session_state.domain_name = (
-        st.session_state.domain_name.strip()
-    )
-
-    st.session_state.stage = "processing"
-
-    st.switch_page(
-        "pages/2_AI_Analysis.py"
-    )

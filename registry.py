@@ -105,7 +105,7 @@ def register_domain(entry: RegistryEntry):
     """
     Upsert a domain registry row.
 
-    The Genie ID is optional and never required for publication.
+    The Genie ID is persisted when an Agent is connected or created; publication remains resilient if Genie is unavailable.
     """
     ensure_registry_exists()
 

@@ -123,18 +123,43 @@ with st.container(border=True):
     # from becoming two semantic relationships.
     # -------------------------------------------------------------
 
-    all_relationships = canonicalize_relationships(
+    # AI suggestions are explicitly review-only. They are never promoted
+    # into the governed graph automatically. This prevents an LLM from
+    # creating a join that the deterministic semantic engine has not
+    # validated.
+    governed_relationships = canonicalize_relationships(
         deterministic_relationships
-        + ai_suggestions
     )
+
+    reviewed_ai_suggestions = []
+
+    # De-duplicate AI suggestions against the governed graph, including
+    # reverse-direction suggestions.
+    governed_keys = {
+        (
+            tuple(sorted([
+                (r.from_table, r.from_column),
+                (r.to_table, r.to_column),
+            ]))
+        )
+        for r in governed_relationships
+    }
+
+    for suggestion in ai_suggestions:
+        key = tuple(sorted([
+            (suggestion.from_table, suggestion.from_column),
+            (suggestion.to_table, suggestion.to_column),
+        ]))
+        if key in governed_keys:
+            continue
+        reviewed_ai_suggestions.append(suggestion)
 
     CONFIDENCE_THRESHOLD = 0.75
 
     high_confidence = [
         r
-        for r in all_relationships
-        if r.confidence
-        >= CONFIDENCE_THRESHOLD
+        for r in governed_relationships
+        if r.confidence >= CONFIDENCE_THRESHOLD
     ]
 
     facts, dimensions = classify_tables(
@@ -176,7 +201,7 @@ with st.container(border=True):
 
     warnings = []
 
-    for r in all_relationships:
+    for r in governed_relationships:
 
         if r.is_many_to_many:
 
@@ -219,7 +244,8 @@ with st.container(border=True):
     model = SemanticModel(
         domain_name=domain_name,
         tables=profiles,
-        relationships=all_relationships,
+        relationships=governed_relationships,
+        ai_suggestions=reviewed_ai_suggestions,
         facts=facts,
         dimensions=dimensions,
         metrics=metrics,
@@ -230,11 +256,7 @@ with st.container(border=True):
 
     st.session_state.model = model
 
-    st.session_state.llm_suggestion_count = sum(
-        1
-        for r in all_relationships
-        if r.is_ai_suggested
-    )
+    st.session_state.llm_suggestion_count = len(reviewed_ai_suggestions)
 
     log.markdown(
         "  \n".join(messages)

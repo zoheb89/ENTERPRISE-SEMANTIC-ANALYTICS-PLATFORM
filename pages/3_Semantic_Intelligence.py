@@ -129,6 +129,33 @@ with tab2:
         "an AI suggestion used the reverse direction."
     )
 
+
+    if model.ai_suggestions:
+        st.divider()
+        section_title(
+            "AI Relationship Suggestions",
+            "Potential relationships detected by AI — review before publishing",
+        )
+
+        for rel in model.ai_suggestions:
+            with st.container(border=True):
+                st.markdown(
+                    f"""
+                    **{rel.from_table}.{rel.from_column}**
+                    →
+                    **{rel.to_table}.{rel.to_column}**
+
+                    **{rel.confidence * 100:.0f}% confidence · AI SUGGESTED**
+                    """
+                )
+                st.caption(rel.reason)
+
+        st.caption(
+            "AI suggestions are intentionally excluded from the governed "
+            "graph until independently validated. Publishing uses only "
+            "deterministic, validated relationships."
+        )
+
 with tab3:
     if not model.metrics:
         st.info("No metrics generated yet — no fact table was confidently identified.")

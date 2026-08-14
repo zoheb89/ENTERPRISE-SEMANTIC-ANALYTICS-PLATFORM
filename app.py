@@ -15,12 +15,13 @@ business_model = st.Page("pages/4_Business_Model.py", title="Business Model", ic
 analytics = st.Page("pages/5_Analytics.py", title="Analytics", icon=":material/bar_chart:")
 ask_ai = st.Page("pages/6_Ask_AI.py", title="Ask AI", icon=":material/chat:")
 security = st.Page("pages/7_Security_Center.py", title="Security Center", icon=":material/shield:")
+genie = st.Page("pages/8_Genie.py", title="Genie Agent", icon=":material/smart_toy:")
 
 pg = st.navigation(
     {
         "": [home],
         "Create — Data to Semantic Model": [onboarding, analysis, intelligence, business_model],
-        "Analyze — Semantic Model to Insight": [analytics, ask_ai],
+        "Analyze — Semantic Model to Insight": [analytics, ask_ai, genie],
         "Govern": [security],
     }
 )

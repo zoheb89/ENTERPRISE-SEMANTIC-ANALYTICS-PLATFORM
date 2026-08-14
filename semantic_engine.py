@@ -96,6 +96,7 @@ class SemanticModel:
     glossary: list[GlossaryEntry] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     pii_findings: dict[str, list[str]] = field(default_factory=dict)
+    ai_suggestions: list[RelationshipCandidate] = field(default_factory=list)
 
 
 def scan_metadata(files: dict[str, pd.DataFrame]) -> dict[str, TableProfile]:
@@ -394,22 +395,162 @@ def _orient_relationship(
     )
 
 
+
+def _find_pk_hubs(
+    profiles: dict[str, TableProfile],
+    min_uniqueness: float = 0.95,
+) -> dict[str, list[tuple[str, str]]]:
+    """
+    Return identifier columns that behave like primary-key hubs.
+
+    A hub is a column that is highly unique in its own table. This is
+    deliberately domain-neutral: machine_id, customer_id, account_id,
+    patient_id, etc. are all treated the same way.
+    """
+    hubs: dict[str, list[tuple[str, str]]] = {}
+    for table_name, profile in profiles.items():
+        for col in profile.columns:
+            if (
+                col.uniqueness_ratio >= min_uniqueness
+                and _looks_like_id_column(col.name, col.dtype)
+            ):
+                hubs.setdefault(
+                    _normalize_col_name(col.name),
+                    [],
+                ).append(
+                    (table_name, col.name)
+                )
+    return hubs
+
+
+def _is_shared_nonunique_key(
+    profiles: dict[str, TableProfile],
+    table_a: str,
+    col_a: str,
+    table_b: str,
+    col_b: str,
+    hubs: dict[str, list[tuple[str, str]]],
+) -> bool:
+    """
+    Reject a false direct fact-to-fact / dimension-to-dimension edge when
+    both columns are non-unique but a third table contains the same key as
+    a unique primary-key hub.
+
+    Example:
+        production_runs.machine_id
+        maintenance.machine_id
+
+    Both are non-unique. machines.machine_id is unique, so the correct
+    model is two FK->PK edges through Machines, not a many-to-many edge
+    between Production Runs and Maintenance.
+    """
+    if _normalize_col_name(col_a) != _normalize_col_name(col_b):
+        return False
+
+    profile_a = profiles[table_a]
+    profile_b = profiles[table_b]
+
+    a = next(c for c in profile_a.columns if c.name == col_a)
+    b = next(c for c in profile_b.columns if c.name == col_b)
+
+    if (
+        a.uniqueness_ratio >= 0.95
+        or b.uniqueness_ratio >= 0.95
+    ):
+        return False
+
+    key = _normalize_col_name(col_a)
+
+    for hub_table, hub_col in hubs.get(key, []):
+        if hub_table in {table_a, table_b}:
+            continue
+
+        return True
+
+    return False
+
+
+def _candidate_confidence(
+    fk_to_pk_overlap: float,
+    fk_uniqueness: float,
+    pk_uniqueness: float,
+) -> float:
+    """
+    Confidence for a canonical FK->PK relationship.
+
+    Full parent-key coverage plus a genuinely unique parent key reaches
+    100%. Partial coverage remains lower and explainable.
+    """
+    parent_signal = min(
+        1.0,
+        max(0.0, pk_uniqueness),
+    )
+
+    containment_signal = min(
+        1.0,
+        max(0.0, fk_to_pk_overlap),
+    )
+
+    cardinality_signal = 1.0 - min(
+        1.0,
+        max(0.0, fk_uniqueness),
+    )
+
+    score = (
+        0.55 * containment_signal
+        + 0.30 * parent_signal
+        + 0.15 * cardinality_signal
+    )
+
+    return round(
+        min(1.0, max(0.0, score)),
+        2,
+    )
+
+
+
+def _is_table_own_primary_key(
+    profile: TableProfile,
+    column_name: str,
+) -> bool:
+    """
+    Prefer the table's apparent own primary key over an alternate unique
+    foreign key. This prevents false edges such as:
+
+        booking_services.booking_id -> payments.booking_id
+
+    when payments.booking_id is unique but payments.payment_id is the
+    table's own primary key and both booking_services and payments really
+    reference bookings.booking_id.
+    """
+    pk = _find_own_primary_key_column(profile)
+    return bool(
+        pk
+        and pk.name == column_name
+        and pk.uniqueness_ratio >= 0.95
+    )
+
+
 def detect_relationships(
     profiles: dict[str, TableProfile],
 ) -> list[RelationshipCandidate]:
     """
-    Detect cross-table FK -> PK relationships.
+    Generic semantic relationship inference.
 
-    Improvements:
-      - checks value overlap in both directions
-      - orients the relationship independently of table iteration order
-      - canonicalizes the relationship so reverse duplicates are impossible
-      - identifies likely many-to-many candidates
-      - preserves explainable evidence
+    Rules:
+      * Only matching identifier-like columns are considered.
+      * A highly unique side is preferred as the PK.
+      * Full FK coverage of a unique PK is high-confidence.
+      * Two non-unique columns are NOT automatically many-to-many.
+        If a third table contains a unique hub for that key, the pair is
+        treated as two relationships through the hub.
+      * Reverse duplicates are canonicalized.
+      * Fact-to-fact relationships are allowed only when one side is
+        genuinely a parent/event key (for example defects -> production_runs).
     """
-
     candidates: list[RelationshipCandidate] = []
     table_names = list(profiles.keys())
+    pk_hubs = _find_pk_hubs(profiles)
 
     for i, t1 in enumerate(table_names):
         for t2 in table_names[i + 1:]:
@@ -431,6 +572,12 @@ def detect_relationships(
                     ):
                         continue
 
+                    if not (
+                        _looks_like_id_column(c1.name, c1.dtype)
+                        or _looks_like_id_column(c2.name, c2.dtype)
+                    ):
+                        continue
+
                     overlap_1_in_2 = _value_overlap_ratio(
                         p1.df[c1.name],
                         p2.df[c2.name],
@@ -440,62 +587,112 @@ def detect_relationships(
                         p1.df[c1.name],
                     )
 
-                    overlap = max(
+                    if max(
                         overlap_1_in_2,
                         overlap_2_in_1,
-                    )
-
-                    if overlap < 0.5:
+                    ) < 0.50:
                         continue
 
-                    (
-                        fk_table,
-                        fk_col,
-                        pk_table,
-                        pk_col,
-                        fk_to_pk_overlap,
-                    ) = _orient_relationship(
+                    # Shared-key detection prevents false M:N edges.
+                    if _is_shared_nonunique_key(
+                        profiles,
                         t1,
-                        c1,
+                        c1.name,
                         t2,
-                        c2,
-                        overlap_1_in_2,
-                        overlap_2_in_1,
+                        c2.name,
+                        pk_hubs,
+                    ):
+                        continue
+
+                    # Prefer the side that is the table's own PK.
+                    # This correctly handles 1:1/unique-FK structures such
+                    # as payments.booking_id -> bookings.booking_id.
+                    t1_is_own_pk = _is_table_own_primary_key(
+                        p1,
+                        c1.name,
+                    )
+                    t2_is_own_pk = _is_table_own_primary_key(
+                        p2,
+                        c2.name,
                     )
 
-                    fk_profile = profiles[fk_table]
-                    pk_profile = profiles[pk_table]
+                    if t1_is_own_pk and not t2_is_own_pk:
+                        (
+                            fk_table,
+                            fk_col,
+                            pk_table,
+                            pk_col,
+                            fk_to_pk_overlap,
+                        ) = (
+                            t2,
+                            c2.name,
+                            t1,
+                            c1.name,
+                            overlap_2_in_1,
+                        )
+                    elif t2_is_own_pk and not t1_is_own_pk:
+                        (
+                            fk_table,
+                            fk_col,
+                            pk_table,
+                            pk_col,
+                            fk_to_pk_overlap,
+                        ) = (
+                            t1,
+                            c1.name,
+                            t2,
+                            c2.name,
+                            overlap_1_in_2,
+                        )
+                    else:
+                        (
+                            fk_table,
+                            fk_col,
+                            pk_table,
+                            pk_col,
+                            fk_to_pk_overlap,
+                        ) = _orient_relationship(
+                            t1,
+                            c1,
+                            t2,
+                            c2,
+                            overlap_1_in_2,
+                            overlap_2_in_1,
+                        )
 
                     fk_column = next(
-                        c for c in fk_profile.columns
+                        c for c in profiles[fk_table].columns
                         if c.name == fk_col
                     )
                     pk_column = next(
-                        c for c in pk_profile.columns
+                        c for c in profiles[pk_table].columns
                         if c.name == pk_col
                     )
 
                     pk_uniqueness = pk_column.uniqueness_ratio
                     fk_uniqueness = fk_column.uniqueness_ratio
 
-                    asymmetry = abs(
-                        pk_uniqueness - fk_uniqueness
-                    )
+                    # A target's merely-unique foreign key is not enough.
+                    # Prefer the target table's own primary key so a shared
+                    # parent key does not turn two child facts into a fake
+                    # direct relationship.
+                    if not _is_table_own_primary_key(
+                        profiles[pk_table],
+                        pk_col,
+                    ):
+                        continue
 
-                    confidence = min(
-                        1.0,
-                        0.50 * fk_to_pk_overlap
-                        + 0.30 * (
-                            1.0
-                            if asymmetry > 0.30
-                            else 0.5
-                        )
-                        + 0.20,
-                    )
+                    # A direct FK->PK edge needs a genuinely parent-like
+                    # target. This avoids inventing relationships between
+                    # two transaction/event tables merely because IDs happen
+                    # to overlap.
+                    if pk_uniqueness < 0.95:
+                        continue
 
-                    is_m2m = (
-                        pk_uniqueness < 0.80
-                        and fk_uniqueness < 0.80
+                    confidence = _candidate_confidence(
+                        fk_to_pk_overlap,
+                        fk_uniqueness,
+                        pk_uniqueness,
                     )
 
                     reason = (
@@ -503,15 +700,9 @@ def detect_relationships(
                         f"{fk_to_pk_overlap * 100:.0f}% of "
                         f"{fk_table}.{fk_col} values exist in "
                         f"{pk_table}.{pk_col}; "
-                        f"{pk_table}.{pk_col} looks like the primary key "
+                        f"{pk_table}.{pk_col} is highly unique "
                         f"(uniqueness {pk_uniqueness * 100:.0f}%)"
                     )
-
-                    if is_m2m:
-                        reason += (
-                            " — neither side is highly unique; "
-                            "possible many-to-many relationship"
-                        )
 
                     candidates.append(
                         RelationshipCandidate(
@@ -519,22 +710,18 @@ def detect_relationships(
                             from_column=fk_col,
                             to_table=pk_table,
                             to_column=pk_col,
-                            confidence=round(confidence, 2),
+                            confidence=confidence,
                             reason=reason,
-                            is_many_to_many=is_m2m,
+                            is_many_to_many=False,
                         )
                     )
 
+    # Self-references remain supported.
     candidates.extend(
         detect_self_referencing_relationships(profiles)
     )
 
-    # -------------------------------------------------------------
-    # Canonical de-duplication.
-    #
-    # Two directions of the same FK/PK relationship can never survive
-    # as two semantic relationships.
-    # -------------------------------------------------------------
+    # Canonical deterministic de-duplication.
     best_by_key: dict[tuple, RelationshipCandidate] = {}
 
     for candidate in candidates:
@@ -547,28 +734,21 @@ def detect_relationships(
 
         existing = best_by_key.get(key)
 
-        if existing is None:
-            best_by_key[key] = candidate
-            continue
-
-        # Prefer deterministic evidence over an AI suggestion if this
-        # function is ever passed mixed candidates.
         if (
-            existing.is_ai_suggested
-            and not candidate.is_ai_suggested
-        ):
-            best_by_key[key] = candidate
-            continue
-
-        if (
-            candidate.confidence
-            > existing.confidence
+            existing is None
+            or candidate.confidence > existing.confidence
         ):
             best_by_key[key] = candidate
 
     return sorted(
         best_by_key.values(),
-        key=lambda r: -r.confidence,
+        key=lambda r: (
+            -r.confidence,
+            r.from_table,
+            r.from_column,
+            r.to_table,
+            r.to_column,
+        ),
     )
 
 
@@ -840,35 +1020,232 @@ def _event_table_score(
     )
 
 
+
+def _table_has_event_signals(
+    profile: TableProfile,
+) -> bool:
+    names = {
+        c.name.lower()
+        for c in profile.columns
+    }
+
+    signals = (
+        "date",
+        "time",
+        "timestamp",
+        "quantity",
+        "amount",
+        "cost",
+        "value",
+        "count",
+        "rate",
+        "duration",
+        "downtime",
+        "production",
+        "defect",
+        "maintenance",
+        "transaction",
+        "order",
+        "encounter",
+        "claim",
+        "payment",
+        "usage",
+        "reading",
+        "booking",
+        "attendance",
+        "payroll",
+        "run",
+        "event",
+    )
+
+    return any(
+        any(token in name for token in signals)
+        for name in names
+    )
+
+
+def _is_reference_numeric_column(
+    col: ColumnProfile,
+) -> bool:
+    """
+    Numeric columns on master/reference entities are not automatically
+    measures. Examples: standard_cost on Products, list_price on a
+    product master, credit_limit on a customer master.
+
+    They become measures only when the table otherwise behaves like an
+    event/transaction table.
+    """
+    name = col.name.lower()
+
+    reference_tokens = (
+        "standard_cost",
+        "list_price",
+        "unit_price",
+        "price",
+        "cost",
+        "limit",
+        "rate",
+        "threshold",
+        "capacity",
+        "target",
+    )
+
+    return any(
+        token in name
+        for token in reference_tokens
+    )
+
+
+def _genuine_measure_columns(
+    profile: TableProfile,
+    master_like: bool = False,
+) -> list[ColumnProfile]:
+    numeric_cols = [
+        c for c in profile.columns
+        if (
+            "int" in c.dtype
+            or "float" in c.dtype
+        )
+    ]
+
+    measures = []
+
+    for col in numeric_cols:
+        if _looks_like_id_column(
+            col.name,
+            col.dtype,
+        ):
+            continue
+
+        if _looks_like_rating_or_category_column(
+            col,
+            profile.row_count,
+        ):
+            continue
+
+        if master_like and _is_reference_numeric_column(col):
+            continue
+
+        measures.append(col)
+
+    return measures
+
+
+def _master_entity_score(
+    profile: TableProfile,
+    incoming_count: int,
+    outgoing_count: int,
+) -> float:
+    """
+    Score a table as a descriptive/master entity.
+
+    A unique key plus mostly descriptive attributes should remain a
+    dimension even when it contains reference numeric attributes such
+    as standard_cost.
+    """
+    id_columns = [
+        c for c in profile.columns
+        if (
+            _looks_like_id_column(c.name, c.dtype)
+            and c.uniqueness_ratio >= 0.95
+        )
+    ]
+
+    if not id_columns:
+        return 0.0
+
+    score = 0.55
+
+    descriptive_count = sum(
+        1
+        for c in profile.columns
+        if (
+            "object" in c.dtype
+            or "string" in c.dtype.lower()
+        )
+        and not _looks_like_id_column(
+            c.name,
+            c.dtype,
+        )
+    )
+
+    if descriptive_count >= 1:
+        score += 0.20
+
+    if descriptive_count >= 2:
+        score += 0.10
+
+    # Master entities commonly contain dates (commission_date, birth_date,
+    # effective_date) and reference values (standard_cost, list_price).
+    # Only strong transaction/event vocabulary should disqualify a master.
+    strong_event_tokens = (
+        "transaction",
+        "order",
+        "encounter",
+        "claim",
+        "payment",
+        "usage",
+        "reading",
+        "booking",
+        "attendance",
+        "payroll",
+        "defect",
+        "production",
+        "maintenance",
+        "run",
+        "event",
+        "ticket",
+        "service",
+        "shipment",
+        "invoice",
+        "purchase",
+        "sale",
+    )
+    if any(
+        any(token in c.name.lower() for token in strong_event_tokens)
+        for c in profile.columns
+    ):
+        score -= 0.30
+
+    if incoming_count > 0:
+        score += 0.05
+
+    if outgoing_count > 0:
+        score -= 0.10
+
+    return max(
+        0.0,
+        min(1.0, score),
+    )
+
+
 def classify_tables(
     profiles: dict[str, TableProfile],
     relationships: list[RelationshipCandidate],
 ) -> tuple[list[str], list[str]]:
     """
-    Domain-agnostic fact/dimension/entity-role inference.
+    Domain-neutral entity-role classification.
 
-    Previous behavior:
-        "If another table references this table => DIMENSION"
+    FACT:
+      Event/transaction/measurement table with real measures or clear
+      event signals.
 
-    That is too simplistic for manufacturing and other multi-fact
-    domains. A Defects table can be a fact/event table even though it
-    participates in a relationship with Production Runs.
+    DIMENSION:
+      Master/reference entity with a highly unique identifier and
+      descriptive attributes, even if it contains reference numeric
+      values such as standard_cost.
 
-    New behavior:
-      1. Build incoming/outgoing relationship counts.
-      2. Detect genuine measures.
-      3. Score event/fact behavior.
-      4. Classify descriptive lookup/master tables as dimensions.
-      5. Allow multiple FACT tables in the same domain.
-      6. Preserve shared dimensions such as Machine and Plant.
+    This supports multiple facts sharing conformed dimensions and does
+    not contain any domain-specific if/elif logic.
     """
-
-    incoming: dict[str, int] = {
-        name: 0 for name in profiles
+    incoming = {
+        name: 0
+        for name in profiles
     }
 
-    outgoing: dict[str, int] = {
-        name: 0 for name in profiles
+    outgoing = {
+        name: 0
+        for name in profiles
     }
 
     for rel in relationships:
@@ -883,65 +1260,64 @@ def classify_tables(
 
     for name, profile in profiles.items():
 
-        measures = _genuine_measure_columns(
-            profile
-        )
-
-        score = _event_table_score(
+        master_score = _master_entity_score(
             profile,
             incoming_count=incoming[name],
             outgoing_count=outgoing[name],
         )
 
-        has_fk = outgoing[name] > 0
-        is_master_like = (
-            profile.row_count > 0
-            and any(
-                c.uniqueness_ratio >= 0.95
-                and _looks_like_id_column(
-                    c.name,
-                    c.dtype,
-                )
-                for c in profile.columns
-            )
-            and not measures
+        master_like = master_score >= 0.70
+
+        measures = _genuine_measure_columns(
+            profile,
+            master_like=master_like,
         )
 
-        # Strong dimension signal:
-        # unique identifier + descriptive attributes + no real measures.
-        if is_master_like:
+        event_shape = _table_has_event_signals(
+            profile
+        )
+
+        # Strong master/reference entity.
+        if master_like and not (
+            measures
+            and event_shape
+            and outgoing[name] >= 1
+        ):
             dimensions.append(name)
             continue
 
-        # Strong fact/event signal:
-        # real measures plus at least one relationship, or a strongly
-        # event-shaped standalone table.
+        # Event/fact entity.
+        if measures and (
+            outgoing[name] >= 1
+            or incoming[name] >= 1
+            or event_shape
+        ):
+            facts.append(name)
+            continue
+
+        # A table with explicit event signals and an identifier can still
+        # be a fact even if it has no numeric measure.
         if (
-            measures
-            and (
-                has_fk
-                or incoming[name] > 0
-                or score >= 0.55
-            )
+            event_shape
+            and outgoing[name] >= 1
+            and not master_like
         ):
             facts.append(name)
             continue
 
-        # A table with a FK and measures is a fact even if another
-        # fact/event table points to it.
-        if measures and has_fk:
+        # Default to dimension only when the table strongly looks like a
+        # reference/master entity. Otherwise keep it as a fact candidate
+        # if it has rows and an event identifier.
+        if master_like:
+            dimensions.append(name)
+        else:
             facts.append(name)
-            continue
 
-        dimensions.append(name)
-
-    # A completely standalone table with measures is a fact.
+    # A standalone numeric table is still a fact.
     if len(profiles) == 1:
-        only_name = next(iter(profiles))
-        if _genuine_measure_columns(
-            profiles[only_name]
-        ):
-            facts = [only_name]
+        only = next(iter(profiles))
+        if _genuine_measure_columns(profiles[only]):
+            facts = [only]
             dimensions = []
 
     return facts, dimensions

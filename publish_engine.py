@@ -114,7 +114,11 @@ def _model_to_metric_view_yaml(model: SemanticModel, fact_table: str, schema: st
     measure_names: list[str] = []
     dimension_names: list[str] = []
 
-    related = [r for r in model.relationships if r.from_table == fact_table]
+    related = [
+        r for r in model.relationships
+        if r.from_table == fact_table
+        and r.to_table not in model.facts
+    ]
     for rel in related:
         alias = _sanitize_identifier(rel.to_table)
         joins_yaml.append(
@@ -176,100 +180,216 @@ measures:
     return yaml_text, measure_names, dimension_names
 
 
-def publish_domain(model: SemanticModel, fact_table: str, genie_space_id, reader_principal: str | None = None) -> dict:
-    """
-    The full, automated publish sequence for one domain:
-      1. Validate + create an isolated schema for this domain
-      2. Write every uploaded table as a real Delta table
-      3. Create the Metric View
-      4. If a separate reader_principal is configured, grant it SELECT +
-         USE SCHEMA (security_fabric — no manual SQL). Under PAT auth,
-         the identity running this publish already owns what it just
-         created — there's no separate "reader" identity to grant to
-         unless one is deliberately configured (e.g. a second, more
-         restricted identity used elsewhere). This step is skipped
-         cleanly, not silently mis-called with a missing value, when
-         none is set.
-      5. Register the Metric View with the shared Genie space (security_fabric — no manual UI)
 
-    Returns a result dict the UI uses to render the Security Center's
-    audit trail and the "domain now live" confirmation.
+def publish_domain(
+    model: SemanticModel,
+    fact_table: str,
+    genie_space_id: str | None = None,
+    reader_principal: str | None = None,
+) -> dict:
     """
+    Production publish pipeline for one metadata-driven domain.
+
+    Creates:
+      * one isolated schema
+      * one Delta table per uploaded asset
+      * one Metric View per detected fact table
+      * one domain Genie Agent (existing mapped ID or automatic creation)
+      * registry-ready metadata for the selected primary fact
+
+    The selected fact remains the primary analytics entry point, while all
+    detected facts are published so the domain semantic model is complete.
+    """
+
     catalog = st.secrets["DATABRICKS_CATALOG"]
-    schema = _validate_domain_schema_name(model.domain_name)
+    schema = _validate_domain_schema_name(
+        model.domain_name
+    )
+
+    if fact_table not in model.facts:
+        raise ValueError(
+            f"'{fact_table}' is not a governed fact table."
+        )
+
     security_actions = []
+    created_tables = []
+    metric_views = {}
 
     with get_sql_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
 
-            created_tables = []
+            cur.execute(
+                f"CREATE SCHEMA IF NOT EXISTS "
+                f"{catalog}.{schema}"
+            )
+
+            # ---------------------------------------------------------
+            # Publish every uploaded table as a real Delta table.
+            # ---------------------------------------------------------
             for table_name, profile in model.tables.items():
-                safe_name = _sanitize_identifier(table_name)
-                full_name = f"{catalog}.{schema}.{safe_name}"
-                _write_dataframe_as_table(cur, profile.df, full_name)
-                created_tables.append(full_name)
 
-            fact_safe = _sanitize_identifier(fact_table)
-            view_name = f"{catalog}.{schema}.mv_{fact_safe}"
-            yaml_body, measure_names, dimension_names = _model_to_metric_view_yaml(model, fact_table, schema, catalog)
-            cur.execute(f"""
-                CREATE OR REPLACE VIEW {view_name}
-                WITH METRICS
-                LANGUAGE YAML
-                AS $${yaml_body}$$
-            """)
+                safe_name = _sanitize_identifier(
+                    table_name
+                )
 
+                full_name = (
+                    f"{catalog}.{schema}.{safe_name}"
+                )
+
+                _write_dataframe_as_table(
+                    cur,
+                    profile.df,
+                    full_name,
+                )
+
+                created_tables.append(
+                    full_name
+                )
+
+            # ---------------------------------------------------------
+            # Publish one governed Metric View per fact.
+            # ---------------------------------------------------------
+            for current_fact in model.facts:
+
+                fact_safe = _sanitize_identifier(
+                    current_fact
+                )
+
+                view_name = (
+                    f"{catalog}.{schema}."
+                    f"mv_{fact_safe}"
+                )
+
+                (
+                    yaml_body,
+                    measure_names,
+                    dimension_names,
+                ) = _model_to_metric_view_yaml(
+                    model,
+                    current_fact,
+                    schema,
+                    catalog,
+                )
+
+                cur.execute(
+                    f"""
+                    CREATE OR REPLACE VIEW
+                    {view_name}
+                    WITH METRICS
+                    LANGUAGE YAML
+                    AS $${yaml_body}$$
+                    """
+                )
+
+                metric_views[current_fact] = {
+                    "metric_view": view_name,
+                    "measures": measure_names,
+                    "dimensions": dimension_names,
+                }
+
+    # -------------------------------------------------------------
+    # Optional reader permissions.
+    # -------------------------------------------------------------
     if reader_principal:
-        grant_action = security.grant_select_on_schema(f"{catalog}.{schema}", reader_principal)
-        security_actions.append(grant_action)
-
-    # ------------------------------------------------------------
-    # Genie
-    #
-    # Genie is intentionally optional for the Free Edition/PAT build.
-    # The semantic publish itself must never fail because the Genie
-    # management REST API is unavailable for the current credential.
-    #
-    # If a Genie Space ID is supplied, it is recorded as an external
-    # reference only. No PATCH/POST is attempted from the application.
-    # ------------------------------------------------------------
-
-    resolved_genie_space_id = (
-        str(genie_space_id).strip()
-        if genie_space_id
-        else None
-    )
-
-    if resolved_genie_space_id:
         security_actions.append(
-            security.SecurityAction(
-                action="Genie Agent",
-                target=resolved_genie_space_id,
-                principal=f"genie-space:{resolved_genie_space_id}",
-                status="skipped",
-                detail=(
-                    "Existing Genie Space ID recorded. Automatic Genie "
-                    "management is disabled for the Free Edition/PAT "
-                    "deployment so Genie API authentication cannot fail "
-                    "the semantic publish."
-                ),
+            security.grant_select_on_schema(
+                f"{catalog}.{schema}",
+                reader_principal,
             )
         )
-    else:
+
+    # -------------------------------------------------------------
+    # Genie — domain-scoped and automatic.
+    #
+    # Preferred configuration:
+    #   [GENIE_SPACES]
+    #   Retail = "..."
+    #
+    # Legacy fallback:
+    #   GENIE_SPACE_ID = "..."
+    #
+    # If neither is present and GENIE_AUTO_CREATE=true, INVENT creates
+    # a Genie Agent for this domain.
+    # -------------------------------------------------------------
+
+    resolved_space_id = (
+        str(genie_space_id).strip()
+        if genie_space_id
+        else security.genie_space_id_from_secrets(
+            model.domain_name
+        )
+    )
+
+    ordered_facts = [
+        fact_table
+    ] + [
+        f
+        for f in model.facts
+        if f != fact_table
+    ]
+
+    first_genie_action = None
+
+    for current_fact in ordered_facts:
+
+        mv = metric_views[current_fact]
+
+        sample_questions = [
+            f"What are the key KPIs for {model.domain_name}?",
+            (
+                f"Show {mv['measures'][0]} by "
+                f"the main business dimensions."
+                if mv["measures"]
+                else (
+                    f"Show the main trends for "
+                    f"{model.domain_name}."
+                )
+            ),
+        ]
+
+        resolved_space_id, action = (
+            security.register_table_with_genie_space(
+                resolved_space_id,
+                table_full_name=(
+                    f"{catalog}.{schema}."
+                    f"{_sanitize_identifier(current_fact)}"
+                ),
+                metric_view_full_name=mv[
+                    "metric_view"
+                ],
+                domain_name=model.domain_name,
+                measures=mv["measures"],
+                dimensions=mv["dimensions"],
+                sample_questions=sample_questions,
+            )
+        )
+
+        security_actions.append(action)
+
+        if first_genie_action is None:
+            first_genie_action = action
+
+    # If no facts were present this would have failed earlier, but keep
+    # the result deterministic.
+    if first_genie_action is None:
         security_actions.append(
             security.record_genie_not_configured(
                 model.domain_name
             )
         )
 
+    primary = metric_views[
+        fact_table
+    ]
+
     return {
         "catalog": catalog,
         "schema": schema,
         "tables_created": created_tables,
-        "dimensions": dimension_names,
-        "metric_view": view_name,
-        "measures": measure_names,
-        "genie_space_id": resolved_genie_space_id,
+        "metric_view": primary["metric_view"],
+        "metric_views": metric_views,
+        "measures": primary["measures"],
+        "dimensions": primary["dimensions"],
+        "genie_space_id": resolved_space_id,
         "security_actions": security_actions,
     }

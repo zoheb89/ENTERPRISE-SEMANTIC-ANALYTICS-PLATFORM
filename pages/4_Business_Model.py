@@ -301,6 +301,7 @@ with st.container(border=True):
                         default_kpi=result["measures"][0] if result["measures"] else "",
                         row_count=model.tables[fact_choice].row_count,
                         published_at=datetime.datetime.utcnow().isoformat(),
+                        genie_space_id=result.get("genie_space_id"),
                     ))
 
                     st.session_state.last_published_domain = model.domain_name
@@ -309,10 +310,66 @@ with st.container(border=True):
                     st.success(f"**{model.domain_name}** published successfully — now live in Analytics, no redeploy needed.")
                     st.markdown(f"**Catalog:** `{result['catalog']}`  \n**Schema:** `{result['schema']}`  \n**Metric View:** `{result['metric_view']}`")
 
-                    st.markdown("**Security actions taken automatically:**")
-                    for action in result["security_actions"]:
-                        icon = "✅" if action.status == "success" else "⚠️"
-                        st.markdown(f"{icon} {action.action} on `{action.target}` — {action.detail}")
+                    st.markdown("**Publication status:**")
+
+                    genie_actions = [
+                        a for a in result["security_actions"]
+                        if a.action == "Genie Agent"
+                    ]
+                    other_actions = [
+                        a for a in result["security_actions"]
+                        if a.action != "Genie Agent"
+                    ]
+
+                    st.markdown(
+                        "✅ Delta tables published  \n"
+                        "✅ Governed Metric View(s) published"
+                    )
+
+                    if genie_actions:
+                        successful_genie = [
+                            a for a in genie_actions
+                            if a.status == "success"
+                        ]
+                        failed_genie = [
+                            a for a in genie_actions
+                            if a.status == "failed"
+                        ]
+
+                        if successful_genie:
+                            st.markdown(
+                                "🧞 **Genie Agent connected**"
+                            )
+                            if result.get("genie_space_id"):
+                                st.caption(
+                                    f"Domain Genie Agent: "
+                                    f"`{result['genie_space_id']}`"
+                                )
+
+                        if failed_genie:
+                            st.warning(
+                                "Genie Agent could not be configured. "
+                                "The semantic publish succeeded; review "
+                                "the Genie permissions/configuration."
+                            )
+                            for action in failed_genie:
+                                st.caption(action.detail)
+
+                        if not successful_genie and not failed_genie:
+                            st.info(
+                                "Genie Agent was not configured for this domain."
+                            )
+
+                    if other_actions:
+                        for action in other_actions:
+                            if action.status == "success":
+                                st.markdown(
+                                    f"✅ **{action.action}** — {action.detail}"
+                                )
+                            elif action.status == "failed":
+                                st.warning(
+                                    f"⚠️ **{action.action}** — {action.detail}"
+                                )
 
                 except Exception as e:
                     st.error(f"Publish failed: {e}")
