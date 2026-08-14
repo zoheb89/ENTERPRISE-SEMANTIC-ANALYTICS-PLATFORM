@@ -9,18 +9,18 @@ def inject_base_css():
     #MainMenu,footer{{visibility:hidden}} html,body,[class*="css"]{{font-family:Inter,system-ui,sans-serif}} .stApp{{background:{CANVAS};color:{SLATE}}}
     .block-container{{max-width:1400px;padding:1.4rem 2rem 3rem}}
     [data-testid="stHeader"]{{background:#fff;border-bottom:1px solid {LINE}}}
-    [data-testid="stSidebar"]{{background:{NAVY}!important;border-right:1px solid rgba(255,255,255,.08)}}
-    [data-testid="stSidebar"]>div:first-child{{padding:.18rem .55rem .35rem!important}}
-    [data-testid="stSidebarContent"]{{padding-bottom:.5rem!important;overflow-y:hidden!important}}
-    [data-testid="stSidebarUserContent"]{{padding-bottom:.5rem!important}}
-    [data-testid="stSidebar"] [data-testid="stButton"]{{width:100%;margin-bottom:1px!important}}
-    [data-testid="stSidebar"] [data-testid="stButton"] button{{width:100%!important;min-height:29px!important;border:1px solid transparent!important;border-radius:9px!important;background:transparent!important;color:#C9D7E5!important;box-shadow:none!important;justify-content:flex-start!important;text-align:left!important;padding:.16rem .55rem!important;font-size:11.5px!important;font-weight:600!important}}
+    [data-testid="stSidebar"]{{background:{NAVY}!important;border-right:1px solid rgba(255,255,255,.08);min-width:255px!important}}
+    [data-testid="stSidebar"]>div:first-child{{padding:.12rem .42rem .25rem!important}}
+    [data-testid="stSidebarContent"]{{padding:.05rem .08rem .25rem!important;overflow-y:auto!important;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}}
+    [data-testid="stSidebarUserContent"]{{padding-bottom:.25rem!important}}
+    [data-testid="stSidebar"] [data-testid="stButton"]{{width:100%;margin:0!important;padding:0!important}}
+    [data-testid="stSidebar"] [data-testid="stButton"] button{{width:100%!important;min-height:27px!important;height:27px!important;border:1px solid transparent!important;border-radius:9px!important;background:transparent!important;color:#C9D7E5!important;box-shadow:none!important;justify-content:flex-start!important;text-align:left!important;padding:.06rem .45rem!important;font-size:11px!important;font-weight:600!important}}
     [data-testid="stSidebar"] [data-testid="stButton"] button:hover{{background:rgba(255,255,255,.08)!important;color:#fff!important}}
     [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]{{background:{TEAL}!important;border-color:{TEAL}!important;color:#fff!important}}
-    .invent-brand{{display:flex;align-items:center;gap:10px;padding:1px 4px 7px;margin-bottom:3px;border-bottom:1px solid rgba(255,255,255,.11)}}
-    .invent-logo{{width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#0A8FA3,#0875D1);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:19px;box-shadow:0 7px 18px rgba(0,0,0,.22)}}
-    .invent-brand-name{{color:#fff;font-weight:800;font-size:14px;line-height:1}} .invent-brand-sub{{color:#8FA5B9;font-size:8px;margin-top:3px;letter-spacing:.25px}}
-    .invent-nav-heading{{color:#6F879B;font-size:8px;font-weight:900;letter-spacing:1.8px;margin:7px 5px 2px}}
+    .invent-brand{{display:flex;align-items:center;gap:8px;padding:0 4px 5px;margin:0 0 3px;border-bottom:1px solid rgba(255,255,255,.11)}}
+    .invent-logo{{width:28px;height:28px;min-width:28px;border-radius:10px;background:linear-gradient(135deg,#0A8FA3,#0875D1);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:16px;box-shadow:0 7px 18px rgba(0,0,0,.22)}}
+    .invent-brand-name{{color:#fff;font-weight:800;font-size:13px;line-height:1}} .invent-brand-sub{{color:#8FA5B9;font-size:8px;margin-top:3px;letter-spacing:.25px}}
+    .invent-nav-heading{{color:#6F879B;font-size:7.5px;font-weight:900;letter-spacing:1.5px;margin:4px 5px 1px;line-height:11px}}
     .platform-topbar{{background:#fff;border:1px solid {LINE};border-radius:13px;padding:17px 22px;margin-bottom:17px;box-shadow:0 2px 8px rgba(16,42,73,.035)}}
     .platform-topbar h1{{font-size:25px;font-weight:800;color:{NAVY};margin:0}} .platform-topbar-sub{{font-size:12.5px;color:{SOFT};margin-top:4px}}
     .platform-card-title{{font-size:16px;font-weight:800;color:{NAVY};margin-bottom:2px}} .platform-card-sub{{font-size:12px;color:{SOFT};margin-bottom:10px}}
