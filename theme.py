@@ -10,17 +10,17 @@ def inject_base_css():
     .block-container{{max-width:1400px;padding:1.4rem 2rem 3rem}}
     [data-testid="stHeader"]{{background:#fff;border-bottom:1px solid {LINE}}}
     [data-testid="stSidebar"]{{background:{NAVY}!important;border-right:1px solid rgba(255,255,255,.08)}}
-    [data-testid="stSidebar"]>div:first-child{{padding:.7rem .65rem .7rem!important}}
+    [data-testid="stSidebar"]>div:first-child{{padding:.18rem .55rem .35rem!important}}
     [data-testid="stSidebarContent"]{{padding-bottom:.5rem!important;overflow-y:hidden!important}}
     [data-testid="stSidebarUserContent"]{{padding-bottom:.5rem!important}}
-    [data-testid="stSidebar"] [data-testid="stButton"]{{width:100%;margin-bottom:3px!important}}
-    [data-testid="stSidebar"] [data-testid="stButton"] button{{width:100%!important;min-height:37px!important;border:1px solid transparent!important;border-radius:9px!important;background:transparent!important;color:#C9D7E5!important;box-shadow:none!important;justify-content:flex-start!important;text-align:left!important;padding:.36rem .65rem!important;font-size:12.5px!important;font-weight:600!important}}
+    [data-testid="stSidebar"] [data-testid="stButton"]{{width:100%;margin-bottom:1px!important}}
+    [data-testid="stSidebar"] [data-testid="stButton"] button{{width:100%!important;min-height:29px!important;border:1px solid transparent!important;border-radius:9px!important;background:transparent!important;color:#C9D7E5!important;box-shadow:none!important;justify-content:flex-start!important;text-align:left!important;padding:.16rem .55rem!important;font-size:11.5px!important;font-weight:600!important}}
     [data-testid="stSidebar"] [data-testid="stButton"] button:hover{{background:rgba(255,255,255,.08)!important;color:#fff!important}}
     [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]{{background:{TEAL}!important;border-color:{TEAL}!important;color:#fff!important}}
-    .invent-brand{{display:flex;align-items:center;gap:10px;padding:5px 5px 15px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,.11)}}
-    .invent-logo{{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#0A8FA3,#0875D1);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:22px;box-shadow:0 7px 18px rgba(0,0,0,.22)}}
-    .invent-brand-name{{color:#fff;font-weight:800;font-size:16px;line-height:1}} .invent-brand-sub{{color:#8FA5B9;font-size:9px;margin-top:5px;letter-spacing:.25px}}
-    .invent-nav-heading{{color:#6F879B;font-size:9px;font-weight:900;letter-spacing:1.8px;margin:15px 6px 5px}}
+    .invent-brand{{display:flex;align-items:center;gap:10px;padding:1px 4px 7px;margin-bottom:3px;border-bottom:1px solid rgba(255,255,255,.11)}}
+    .invent-logo{{width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#0A8FA3,#0875D1);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:19px;box-shadow:0 7px 18px rgba(0,0,0,.22)}}
+    .invent-brand-name{{color:#fff;font-weight:800;font-size:14px;line-height:1}} .invent-brand-sub{{color:#8FA5B9;font-size:8px;margin-top:3px;letter-spacing:.25px}}
+    .invent-nav-heading{{color:#6F879B;font-size:8px;font-weight:900;letter-spacing:1.8px;margin:7px 5px 2px}}
     .platform-topbar{{background:#fff;border:1px solid {LINE};border-radius:13px;padding:17px 22px;margin-bottom:17px;box-shadow:0 2px 8px rgba(16,42,73,.035)}}
     .platform-topbar h1{{font-size:25px;font-weight:800;color:{NAVY};margin:0}} .platform-topbar-sub{{font-size:12.5px;color:{SOFT};margin-top:4px}}
     .platform-card-title{{font-size:16px;font-weight:800;color:{NAVY};margin-bottom:2px}} .platform-card-sub{{font-size:12px;color:{SOFT};margin-bottom:10px}}
@@ -53,7 +53,7 @@ def render_sidebar_navigation():
             st.markdown(f'<div class="invent-nav-heading">{heading}</div>',unsafe_allow_html=True)
             for page,icon in pages:
                 if st.button(f'{icon}  {page}',key='nav_'+page.lower().replace(' ','_'),use_container_width=True,type='primary' if current==page else 'secondary'): navigate_to(page)
-        st.markdown('<div style="height:18px"></div><div style="color:#728A9F;font-size:9px;padding:0 7px">C INVENT • Production Ready</div>',unsafe_allow_html=True)
+        st.markdown('<div style="height:4px"></div><div style="color:#728A9F;font-size:8px;padding:0 7px">C INVENT • Production Ready</div>',unsafe_allow_html=True)
 
 def page_header(title,subtitle): st.markdown(f'<div class="platform-topbar"><h1>{title}</h1><div class="platform-topbar-sub">{subtitle}</div></div>',unsafe_allow_html=True)
 def section_title(title,subtitle=''):
