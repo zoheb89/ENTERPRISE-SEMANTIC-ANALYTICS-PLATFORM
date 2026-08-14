@@ -170,10 +170,21 @@ def _build_domain_source_sql(model: SemanticModel, catalog: str, schema: str, pr
             if path is None: continue
             cur=fact
             for r in path:
-                if r.to_table in aliases: continue
+                # Advance the current relation even when an intermediate table
+                # was already joined. Without this, a path such as
+                # order_items -> orders -> stores incorrectly generated
+                # `f0.store_id` instead of `j1.store_id`, causing
+                # UNRESOLVED_COLUMN at publish time.
+                if r.to_table in aliases:
+                    cur = r.to_table
+                    continue
                 alias=f"j{len(aliases)}"
                 aliases[r.to_table]=alias
-                joins.append(f"LEFT JOIN {catalog}.{schema}.{_sanitize_identifier(r.to_table)} {alias} ON {aliases[cur]}.`{r.from_column}` = {alias}.`{r.to_column}`")
+                left_alias=aliases[cur]
+                joins.append(
+                    f"LEFT JOIN {catalog}.{schema}.{_sanitize_identifier(r.to_table)} {alias} "
+                    f"ON {left_alias}.`{r.from_column}` = {alias}.`{r.to_column}`"
+                )
                 cur=r.to_table
             paths[d]=aliases[d]
         select=[f"'{_sanitize_identifier(fact)}' AS fact_type"]
