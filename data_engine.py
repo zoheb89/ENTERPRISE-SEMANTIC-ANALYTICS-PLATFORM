@@ -2,7 +2,7 @@
 Enterprise Semantic Analytics Platform — Data Engine.
 
 Source-agnostic ingestion boundary for the Streamlit POC.
-Supports CSV, Excel, JSON and Parquet uploads and exposes a common
+Supports CSV, Excel, JSON, Parquet and XML uploads and exposes a common
 DataFrame contract to the semantic engine.
 
 The production architecture keeps connectors behind this boundary so
@@ -18,7 +18,7 @@ from typing import BinaryIO
 import pandas as pd
 
 
-SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".parquet"}
+SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".parquet", ".xml"}
 
 
 @dataclass
@@ -46,6 +46,11 @@ def load_bytes(name: str, payload: bytes) -> pd.DataFrame:
         return pd.read_json(io.BytesIO(payload))
     if ext == ".parquet":
         return pd.read_parquet(io.BytesIO(payload))
+    if ext == ".xml":
+        # Use pandas' standard-library ElementTree parser so XML uploads do
+        # not require the optional lxml package. The default row XPath
+        # (./*) works for the common <root><row>...</row></root> shape.
+        return pd.read_xml(io.BytesIO(payload), parser="etree")
     raise ValueError(
         f"Unsupported file type for '{name}'. "
         f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
@@ -95,7 +100,7 @@ def prepare_files(files: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
 
 def source_capabilities() -> dict[str, list[str]]:
     return {
-        "File": ["CSV", "Excel", "JSON", "Parquet"],
+        "File": ["CSV", "Excel", "JSON", "Parquet", "XML"],
         "Database": ["Connector boundary ready"],
         "API": ["Connector boundary ready"],
         "Cloud Storage": ["Connector boundary ready"],

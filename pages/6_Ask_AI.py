@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from theme import (
+    navigate_to,
     inject_base_css,
     render_sidebar_brand,
     page_header,
@@ -65,9 +66,7 @@ if not domains:
 
     if st.button("← Go to Data Onboarding"):
 
-        st.switch_page(
-            "pages/1_Data_Onboarding.py"
-        )
+        navigate_to("Data Onboarding")
 
     st.stop()
 

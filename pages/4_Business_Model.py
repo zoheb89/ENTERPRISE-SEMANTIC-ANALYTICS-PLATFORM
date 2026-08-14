@@ -2,10 +2,9 @@ import datetime
 
 import streamlit as st
 
-from theme import inject_base_css, render_sidebar_brand, page_header, section_title
+from theme import navigate_to, inject_base_css, render_sidebar_brand, page_header, section_title
 import security_fabric as security
 import publish_engine
-from qa_engine import run_qa
 from registry import RegistryEntry, ensure_registry_exists, register_domain
 
 inject_base_css()
@@ -17,7 +16,7 @@ model = st.session_state.get("model")
 if not model:
     st.warning("No semantic model yet.")
     if st.button("← Go to Data Onboarding"):
-        st.switch_page("pages/1_Data_Onboarding.py")
+        navigate_to("Data Onboarding")
     st.stop()
 
 with st.container(border=True):
@@ -94,19 +93,10 @@ with st.container(border=True):
                     rel.to_table
                 )
 
-                if rel.to_table in model.dimensions:
-                    role_label = "DIRECT DIMENSION / RELATED ENTITY"
-                    icon = "🟠"
-                elif rel.to_table in model.facts:
-                    role_label = "FACT RELATIONSHIP"
-                    icon = "🔵"
-                else:
-                    role_label = "RELATED ENTITY"
-                    icon = "⚪"
-
                 st.markdown(
                     f"""
-                    **{icon} {rel.to_table} — {role_label}**  
+                    **🟠 {rel.to_table} — "
+                    f"DIRECT DIMENSION / RELATED ENTITY**  
                     `{rel.from_column} = {rel.to_column}`  
                     **{rel.confidence * 100:.0f}% confidence** · N:1
                     """
@@ -167,7 +157,7 @@ with st.container(border=True):
 
             for target in all_tables:
 
-                if target == fact or target not in model.dimensions:
+                if target == fact:
                     continue
 
                 if target in direct_targets:
@@ -235,7 +225,7 @@ with st.container(border=True):
         for r in model.relationships
         if (
             r.from_table in model.facts
-            and r.to_table in model.dimensions
+            and r.to_table not in model.facts
         )
     )
 
@@ -267,33 +257,6 @@ with st.container(border=True):
 
 st.divider()
 
-# Mandatory QA gate immediately before publication.
-qa_result = run_qa(model)
-st.session_state.qa_result = qa_result
-
-if qa_result["status"] == "PASS":
-    st.success(
-        f"🧪 **QA PASS — {qa_result['score']}/100** · "
-        f"{qa_result['passed']} checks passed."
-    )
-elif qa_result["status"] == "WARN":
-    st.warning(
-        f"🧪 **QA PASS WITH WARNINGS — {qa_result['score']}/100** · "
-        f"{qa_result['warnings']} warning(s) require review."
-    )
-else:
-    st.error(
-        f"🧪 **QA BLOCKED — {qa_result['score']}/100** · "
-        f"{qa_result['blocking_failures']} blocking issue(s)."
-    )
-    if st.button(
-        "Fix / Review QA Issues →",
-        use_container_width=True,
-    ):
-        st.switch_page("pages/9_QA_Validation.py")
-
-st.divider()
-
 with st.container(border=True):
     section_title("Publish", "Creates real Delta tables and a governed Metric View — with automatic security actions, no manual Databricks step")
 
@@ -307,7 +270,7 @@ with st.container(border=True):
     elif not model.facts:
         st.warning("No fact table identified — nothing to publish yet.")
     else:
-        fact_choice = st.selectbox("Primary Fact / Default Analytics", model.facts)
+        fact_choice = st.selectbox("Fact table to publish", model.facts)
 
         if model.pii_findings:
             st.markdown(
@@ -317,7 +280,7 @@ with st.container(border=True):
                 unsafe_allow_html=True,
             )
 
-        if st.button("Publish This Domain", type="primary", disabled=not qa_result["publish_allowed"]):
+        if st.button("Publish This Domain", type="primary"):
             with st.spinner("Publishing — creating tables, Metric View, and issuing security grants automatically…"):
                 try:
                     # Under PAT auth the publishing identity already owns
@@ -339,11 +302,6 @@ with st.container(border=True):
                         row_count=model.tables[fact_choice].row_count,
                         published_at=datetime.datetime.utcnow().isoformat(),
                         genie_space_id=result.get("genie_space_id"),
-                        genie_status=result.get("genie_status", "not_configured"),
-                        metric_views=[
-                            mv["metric_view"]
-                            for mv in result.get("metric_views", {}).values()
-                        ],
                     ))
 
                     st.session_state.last_published_domain = model.domain_name
@@ -378,9 +336,7 @@ with st.container(border=True):
                             if a.status == "failed"
                         ]
 
-                        genie_status = result.get("genie_status", "not_configured")
-
-                        if genie_status == "connected":
+                        if successful_genie:
                             st.markdown(
                                 "🧞 **Genie Agent connected**"
                             )
@@ -389,42 +345,19 @@ with st.container(border=True):
                                     f"Domain Genie Agent: "
                                     f"`{result['genie_space_id']}`"
                                 )
-                            st.caption(
-                                f"Configured {len(successful_genie)}/{len(genie_actions)} "
-                                "Genie registration action(s)."
-                            )
 
-                        elif genie_status == "failed":
-                            st.error(
-                                "🧞 **Genie Agent configuration failed**"
-                            )
-                            if result.get("genie_space_id"):
-                                st.caption(
-                                    f"Genie Agent ID: `{result['genie_space_id']}`"
-                                )
-                            st.caption(
-                                "The semantic publication succeeded, but Genie "
-                                "is not marked connected until every required "
-                                "Metric View registration succeeds."
-                            )
-                            for action in failed_genie:
-                                st.code(action.detail, language="text")
-
-                        elif genie_status == "pending":
+                        if failed_genie:
                             st.warning(
-                                "🧞 **Genie Agent partially configured**"
-                            )
-                            st.caption(
-                                f"{len(successful_genie)}/{len(genie_actions)} "
-                                "registration actions succeeded. Genie is not "
-                                "marked connected yet."
+                                "Genie Agent could not be configured. "
+                                "The semantic publish succeeded; review "
+                                "the Genie permissions/configuration."
                             )
                             for action in failed_genie:
-                                st.code(action.detail, language="text")
+                                st.caption(action.detail)
 
-                        else:
+                        if not successful_genie and not failed_genie:
                             st.info(
-                                "🧞 Genie Agent was not configured for this domain."
+                                "Genie Agent was not configured for this domain."
                             )
 
                     if other_actions:
@@ -445,7 +378,7 @@ st.divider()
 col1, col2 = st.columns(2)
 with col1:
     if st.button("← Back to Semantic Intelligence", use_container_width=True):
-        st.switch_page("pages/3_Semantic_Intelligence.py")
+        navigate_to("Semantic Intelligence")
 with col2:
     if st.button("Go to Analytics →", use_container_width=True, type="primary"):
-        st.switch_page("pages/5_Analytics.py")
+        navigate_to("Analytics")

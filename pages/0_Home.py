@@ -1,6 +1,6 @@
 import streamlit as st
 
-from theme import inject_base_css, render_sidebar_brand, section_title
+from theme import navigate_to, inject_base_css, render_sidebar_brand, section_title
 import security_fabric as security
 
 inject_base_css()
@@ -28,10 +28,10 @@ st.markdown(
 col1, col2 = st.columns([1, 1])
 with col1:
     if st.button("＋ Connect Data", type="primary", use_container_width=True):
-        st.switch_page("pages/1_Data_Onboarding.py")
+        navigate_to("Data Onboarding")
 with col2:
     if st.button("View Analytics", use_container_width=True):
-        st.switch_page("pages/5_Analytics.py")
+        navigate_to("Analytics")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -75,4 +75,4 @@ with st.container(border=True):
             st.caption("Databricks secrets are not configured for this deployment. See README.md.")
     with col_b:
         if st.button("Security Center →"):
-            st.switch_page("pages/7_Security_Center.py")
+            navigate_to("Security Center")

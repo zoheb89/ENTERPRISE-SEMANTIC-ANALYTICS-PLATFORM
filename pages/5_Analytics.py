@@ -1,6 +1,6 @@
 import streamlit as st
 
-from theme import inject_base_css, render_sidebar_brand, page_header
+from theme import navigate_to, inject_base_css, render_sidebar_brand, page_header
 import security_fabric as security
 from registry import list_domains
 from analytics_engine import render_domain_dashboard
@@ -24,7 +24,7 @@ with st.spinner("Loading published domains from the metadata registry…"):
 if not domains:
     st.info("No domains published yet.")
     if st.button("← Go publish your first domain"):
-        st.switch_page("pages/1_Data_Onboarding.py")
+        navigate_to("Data Onboarding")
     st.stop()
 
 domain_names = [d.domain_name for d in domains]

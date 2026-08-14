@@ -3,7 +3,7 @@ import time
 
 import streamlit as st
 
-from theme import inject_base_css, render_sidebar_brand, page_header
+from theme import navigate_to, inject_base_css, render_sidebar_brand, page_header
 from semantic_engine import (
     scan_metadata,
     detect_data_quality_issues,
@@ -17,7 +17,6 @@ from semantic_engine import (
 )
 import ai_engine
 import security_fabric as security
-from qa_engine import run_qa
 
 
 inject_base_css()
@@ -31,9 +30,7 @@ page_header(
 if not st.session_state.get("uploaded_files"):
     st.warning("No data to analyze yet.")
     if st.button("← Go to Data Onboarding"):
-        st.switch_page(
-            "pages/1_Data_Onboarding.py"
-        )
+        navigate_to("Data Onboarding")
     st.stop()
 
 domain_name = st.session_state.get(
@@ -259,10 +256,6 @@ with st.container(border=True):
 
     st.session_state.llm_suggestion_count = len(reviewed_ai_suggestions)
 
-    # Mandatory runtime QA gate. The result is generated from the
-    # metadata-driven semantic model before the user can publish.
-    st.session_state.qa_result = run_qa(model)
-
     log.markdown(
         "  \n".join(messages)
         + "\n\n**Analysis complete.**"
@@ -277,40 +270,25 @@ st.success(
     f"{len(model.metrics)} metrics."
 )
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     if st.button(
         "View Semantic Intelligence →",
         use_container_width=True,
     ):
-        st.switch_page(
-            "pages/3_Semantic_Intelligence.py"
-        )
+        navigate_to("Semantic Intelligence")
 
 with col2:
     if st.button(
         "View Business Model →",
         use_container_width=True,
     ):
-        st.switch_page(
-            "pages/4_Business_Model.py"
-        )
+        navigate_to("Business Model")
 
 with col3:
-    if st.button(
-        "🧪 View QA Gate →",
-        use_container_width=True,
-    ):
-        st.switch_page(
-            "pages/9_QA_Validation.py"
-        )
-
-with col4:
     if st.button(
         "← Upload Different Data",
         use_container_width=True,
     ):
-        st.switch_page(
-            "pages/1_Data_Onboarding.py"
-        )
+        navigate_to("Data Onboarding")

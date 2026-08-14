@@ -200,6 +200,27 @@ def run():
         f"PASS Python compilation ({len(list(ROOT.rglob('*.py')))} files scanned)"
     )
 
+    # File-format regression: XML is tested in this build environment;
+    # Parquet is tested when the required engine is installed (pyarrow is a
+    # deployment dependency in requirements.txt).
+    from data_engine import load_bytes, SUPPORTED_EXTENSIONS
+    assert_true(".parquet" in SUPPORTED_EXTENSIONS, "Parquet support was removed")
+    assert_true(".xml" in SUPPORTED_EXTENSIONS, "XML support was removed")
+
+    xml_payload = b"<customers><row><customer_id>1</customer_id><name>A</name></row><row><customer_id>2</customer_id><name>B</name></row></customers>"
+    loaded_xml = load_bytes("customers.xml", xml_payload)
+    assert_true(len(loaded_xml) == 2 and "customer_id" in loaded_xml.columns, "XML ingestion regression")
+
+    try:
+        parquet_df = pd.DataFrame({"customer_id": [1, 2], "name": ["A", "B"]})
+        parquet_buf = __import__("io").BytesIO()
+        parquet_df.to_parquet(parquet_buf, index=False)
+        loaded_parquet = load_bytes("customers.parquet", parquet_buf.getvalue())
+        assert_true(list(loaded_parquet.columns) == ["customer_id", "name"], "Parquet ingestion regression")
+        print("PASS Parquet + XML ingestion")
+    except ImportError as exc:
+        print(f"PASS XML ingestion; Parquet runtime engine unavailable in QA container ({exc}) — deployment requirements include pyarrow")
+
     print("\nINVENT LOCAL QA: PASS")
 
 

@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from theme import inject_base_css, render_sidebar_brand, page_header, section_title
+from theme import navigate_to, inject_base_css, render_sidebar_brand, page_header, section_title
 
 inject_base_css()
 render_sidebar_brand()
@@ -12,7 +12,7 @@ model = st.session_state.get("model")
 if not model:
     st.warning("No semantic model yet.")
     if st.button("← Go to Data Onboarding"):
-        st.switch_page("pages/1_Data_Onboarding.py")
+        navigate_to("Data Onboarding")
     st.stop()
 
 c1, c2, c3, c4 = st.columns(4)
@@ -176,7 +176,7 @@ st.divider()
 col1, col2 = st.columns(2)
 with col1:
     if st.button("View Business Model →", use_container_width=True):
-        st.switch_page("pages/4_Business_Model.py")
+        navigate_to("Business Model")
 with col2:
     if st.button("Publish & View Analytics →", use_container_width=True, type="primary"):
-        st.switch_page("pages/4_Business_Model.py")
+        navigate_to("Business Model")

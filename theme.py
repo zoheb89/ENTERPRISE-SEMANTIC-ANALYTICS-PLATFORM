@@ -92,7 +92,52 @@ def inject_base_css():
     )
 
 
+def navigate_to(page_name: str):
+    """Navigate inside INVENT without changing the browser URL.
+
+    Keeping one Streamlit document URL prevents browser refresh/reboot from
+    restoring a deep-linked page. A refresh therefore always starts at Home.
+    """
+    st.session_state["_invent_current_page"] = page_name
+    st.rerun()
+
+
+def render_sidebar_navigation():
+    """Render INVENT navigation in the sidebar without st.navigation()."""
+    pages = {
+        "Home": "Home",
+        "Data Onboarding": "Data Onboarding",
+        "AI Analysis": "AI Analysis",
+        "Semantic Intelligence": "Semantic Intelligence",
+        "Business Model": "Business Model",
+        "Analytics": "Analytics",
+        "Ask AI": "Ask AI",
+        "Genie Agent": "Genie Agent",
+        "Security Center": "Security Center",
+        "QA Validation": "QA Validation",
+    }
+    current = st.session_state.get("_invent_current_page", "Home")
+    labels = list(pages.keys())
+    try:
+        idx = labels.index(current)
+    except ValueError:
+        idx = 0
+    selected = st.sidebar.radio(
+        "",
+        labels,
+        index=idx,
+        key="_invent_sidebar_nav",
+        label_visibility="collapsed",
+    )
+    if selected != current:
+        st.session_state["_invent_current_page"] = selected
+        st.rerun()
+
+
 def render_sidebar_brand():
+    if st.session_state.get("_invent_sidebar_brand_rendered"):
+        return
+    st.session_state["_invent_sidebar_brand_rendered"] = True
     logo_path = Path(__file__).resolve().parent / "assets" / "platform_logo.svg"
 
     if logo_path.is_file():

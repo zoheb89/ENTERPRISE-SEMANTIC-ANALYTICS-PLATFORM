@@ -35,6 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import uuid
+import re
 
 import requests
 import streamlit as st
@@ -293,35 +294,28 @@ def _genie_auto_create_enabled() -> bool:
         return True
 
 
-def _normalize_genie_agent_id(value: str | None) -> str | None:
-    """Normalize a Genie Agent/Space identifier without changing its identity.
+def _is_valid_genie_agent_id(
+    value: str | None,
+) -> bool:
+    """Validate a Genie Agent/Space identifier using the API's UUID contract.
 
-    Current Agent Mode IDs are commonly exposed as 32-character lowercase
-    hexadecimal strings. Workspace Genie management APIs also document the
-    space identifier as a UUID. Accept both representations so a copied
-    Genie URL does not get rejected merely because it contains UUID hyphens.
+    Databricks documents the space_id path parameter as a UUID. Older INVENT
+    builds incorrectly required exactly 32 lowercase hexadecimal characters,
+    which rejected valid hyphenated UUIDs and produced misleading
+    "invalid Agent ID" failures for newer IDs.
     """
-    if value is None:
-        return None
-
-    cleaned = str(value).strip()
-    if not cleaned:
-        return None
-
-    import re
-    import uuid
-
-    if re.fullmatch(r"[0-9a-fA-F]{32}", cleaned):
-        return cleaned.lower()
-
+    if not value:
+        return False
+    text = str(value).strip()
     try:
-        return str(uuid.UUID(cleaned))
-    except (ValueError, AttributeError):
-        return None
-
-
-def _is_valid_genie_agent_id(value: str | None) -> bool:
-    return _normalize_genie_agent_id(value) is not None
+        uuid.UUID(text)
+        return True
+    except (ValueError, AttributeError, TypeError):
+        try:
+            uuid.UUID(hex=text)
+            return True
+        except (ValueError, AttributeError, TypeError):
+            return False
 
 
 def _genie_headers() -> dict[str, str]:
@@ -353,7 +347,7 @@ def _new_genie_item_id() -> str:
 
 def _merge_genie_serialized_space(
     serialized_space: str,
-    metric_view_full_name: str | list[str],
+    metric_view_full_name: str,
     domain_name: str,
     measures: list[str] | None = None,
     dimensions: list[str] | None = None,
@@ -372,18 +366,6 @@ def _merge_genie_serialized_space(
         raise RuntimeError(
             "Genie serialized_space is not a JSON object."
         )
-
-    # Normalize to a unique, deterministic domain-level list.
-    metric_view_names = (
-        [metric_view_full_name]
-        if isinstance(metric_view_full_name, str)
-        else list(metric_view_full_name or [])
-    )
-    metric_view_names = list(dict.fromkeys(
-        str(v).strip() for v in metric_view_names if str(v).strip()
-    ))
-    if not metric_view_names:
-        raise RuntimeError("At least one governed Metric View is required for Genie.")
 
     config.setdefault("version", 2)
     config.setdefault("config", {})
@@ -410,20 +392,18 @@ def _merge_genie_serialized_space(
         if isinstance(item, dict)
     }
 
-    for metric_view_name in metric_view_names:
-        if metric_view_name not in existing_metric_ids:
-            metric_views.append(
-                {
-                    "identifier": metric_view_name,
-                    "description": [
-                        (
-                            f"INVENT governed semantic Metric View "
-                            f"for the {domain_name} domain."
-                        )
-                    ],
-                }
-            )
-            existing_metric_ids.add(metric_view_name)
+    if metric_view_full_name not in existing_metric_ids:
+        metric_views.append(
+            {
+                "identifier": metric_view_full_name,
+                "description": [
+                    (
+                        f"INVENT governed semantic Metric View "
+                        f"for the {domain_name} domain."
+                    )
+                ],
+            }
+        )
 
     # Sample questions
     questions = config["config"].setdefault(
@@ -482,10 +462,9 @@ def _merge_genie_serialized_space(
         )
 
     instruction = (
-        "INVENT governed semantic model: use the published Metric Views "
-        f"{', '.join(metric_view_names)} for the {domain_name} domain. "
-        "Use the Metric View that best matches the user's question and "
-        "prefer its defined measures and dimensions. "
+        "INVENT governed semantic model: use the published Metric View "
+        f"{metric_view_full_name} as the primary analytical source for "
+        f"the {domain_name} domain. Prefer its defined measures and "
         "dimensions. Do not invent alternative metric definitions. "
         "For Metric View measures, use MEASURE() when generating SQL. "
         "Do not bypass the governed semantic layer with raw-table joins "
@@ -515,9 +494,37 @@ def _merge_genie_serialized_space(
     )
 
 
+def _find_existing_genie_agent(domain_name: str) -> str | None:
+    """Find an existing INVENT Genie Agent by its deterministic title.
+
+    This is the recovery path for stale/invalid GENIE_SPACE_ID values. The
+    list endpoint is read-only and lets a deployment recover without forcing
+    the user to delete or recreate an Agent manually.
+    """
+    host = st.secrets["DATABRICKS_HOST"].rstrip("/")
+    try:
+        resp = requests.get(
+            f"{host}/api/2.0/genie/spaces",
+            params={"page_size": 100},
+            headers=_genie_headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        expected = f"INVENT — {domain_name}".strip().casefold()
+        for item in data.get("spaces", []) or []:
+            title = str(item.get("title") or "").strip().casefold()
+            candidate = item.get("space_id") or item.get("id")
+            if title == expected and _is_valid_genie_agent_id(candidate):
+                return str(candidate)
+    except Exception:
+        return None
+    return None
+
+
 def _update_existing_genie_agent(
     space_id: str,
-    metric_view_full_name: str | list[str],
+    metric_view_full_name: str,
     domain_name: str,
     measures: list[str] | None,
     dimensions: list[str] | None,
@@ -580,12 +587,12 @@ def _update_existing_genie_agent(
 
         return SecurityAction(
             action="Genie Agent",
-            target=", ".join(metric_view_names),
+            target=metric_view_full_name,
             principal=f"genie-space:{space_id}",
             status="success",
             detail=(
-                f"Configured {len(metric_view_names)} governed Metric View(s) "
-                f"in Genie Agent {space_id} for domain '{domain_name}'."
+                f"Metric View registered in Genie Agent "
+                f"{space_id} for domain '{domain_name}'."
             ),
         )
 
@@ -624,7 +631,7 @@ def _update_existing_genie_agent(
 
 
 def _create_genie_agent(
-    metric_view_full_name: str | list[str],
+    metric_view_full_name: str,
     domain_name: str,
     measures: list[str] | None,
     dimensions: list[str] | None,
@@ -699,11 +706,7 @@ def _create_genie_agent(
             str(space_id),
             SecurityAction(
                 action="Genie Agent",
-                target=(
-                    ", ".join(metric_view_full_name)
-                    if isinstance(metric_view_full_name, list)
-                    else metric_view_full_name
-                ),
+                target=metric_view_full_name,
                 principal=f"genie-space:{space_id}",
                 status="success",
                 detail=(
@@ -750,81 +753,6 @@ def _create_genie_agent(
                 detail=str(exc),
             ),
         )
-
-
-
-def register_domain_with_genie_space(
-    space_id: str | None,
-    domain_name: str,
-    metric_views: list[str],
-    measures: list[str] | None = None,
-    dimensions: list[str] | None = None,
-    sample_questions: list[str] | None = None,
-) -> tuple[str | None, SecurityAction]:
-    """Configure the complete governed Metric View set for one domain.
-
-    This is intentionally one Genie UpdateSpace operation per domain.
-    INVENT must never leave Genie containing only the last fact processed.
-    """
-    names = list(dict.fromkeys(
-        str(v).strip() for v in (metric_views or []) if str(v).strip()
-    ))
-    if not names:
-        return None, SecurityAction(
-            action="Genie Agent",
-            target=domain_name,
-            principal="none",
-            status="failed",
-            detail="No governed Metric Views were supplied for the domain.",
-        )
-
-    resolved = (
-        _normalize_genie_agent_id(space_id)
-        if space_id
-        else None
-    )
-
-    if space_id and not resolved:
-        return None, SecurityAction(
-            action="Genie Agent",
-            target=", ".join(names),
-            principal=f"genie-space:{space_id}",
-            status="failed",
-            detail=(
-                "Configured Genie Agent ID is invalid. "
-                "Copy the current ID from the Databricks Genie Agent URL."
-            ),
-        )
-
-    if resolved:
-        return resolved, _update_existing_genie_agent(
-            resolved,
-            names,
-            domain_name,
-            measures,
-            dimensions,
-            sample_questions,
-        )
-
-    if _genie_auto_create_enabled():
-        return _create_genie_agent(
-            names,
-            domain_name,
-            measures,
-            dimensions,
-            sample_questions,
-        )
-
-    return None, SecurityAction(
-        action="Genie Agent",
-        target=", ".join(names),
-        principal="none",
-        status="failed",
-        detail=(
-            "No Genie Agent is mapped to this domain and "
-            "GENIE_AUTO_CREATE is disabled."
-        ),
-    )
 
 
 def record_genie_not_configured(
@@ -874,38 +802,95 @@ def register_table_with_genie_space(
         )
 
     if space_id:
-        normalized_space_id = _normalize_genie_agent_id(space_id)
-        if not normalized_space_id:
-            return (
-                None,
-                SecurityAction(
-                    action="Genie Agent",
-                    target=metric_view,
-                    principal=f"genie-space:{space_id}",
-                    status="failed",
-                    detail=(
-                        "Configured Genie Agent ID is not a valid 32-character "
-                        "hexadecimal Agent ID or UUID. "
-                        f"Received: {space_id!r}. "
-                        "Copy the ID from the Databricks Genie Agent URL."
-                    ),
-                ),
+        if not _is_valid_genie_agent_id(space_id):
+            recovered = _find_existing_genie_agent(
+                domain_name or "domain"
             )
+            if recovered:
+                space_id = recovered
+            elif _genie_auto_create_enabled():
+                created_id, create_action = _create_genie_agent(
+                    metric_view,
+                    domain_name or "domain",
+                    measures,
+                    dimensions,
+                    sample_questions,
+                )
+                if created_id:
+                    return created_id, create_action
+                create_action.detail = (
+                    "Configured Genie Agent ID was invalid/stale. "
+                    "Automatic recovery could not create a replacement. "
+                    + create_action.detail
+                )
+                return None, create_action
+            else:
+                return (
+                    None,
+                    SecurityAction(
+                        action="Genie Agent",
+                        target=metric_view,
+                        principal=f"genie-space:{space_id}",
+                        status="failed",
+                        detail=(
+                            "Configured Genie Agent ID is not a valid UUID. "
+                            "GENIE_AUTO_CREATE is disabled and no matching "
+                            "INVENT Agent could be recovered."
+                        ),
+                    ),
+                )
 
         action = _update_existing_genie_agent(
-            normalized_space_id,
+            space_id,
             metric_view,
             domain_name or "domain",
             measures,
             dimensions,
             sample_questions,
         )
-        return (
-            normalized_space_id
-            if action.status == "success"
-            else None,
-            action,
-        )
+        if action.status == "success":
+            return space_id, action
+
+        # Recover a deleted/stale UUID without hiding real permission errors.
+        if _genie_auto_create_enabled() and (
+            "HTTP 404" in action.detail
+            or "NOT_FOUND" in action.detail
+            or "FEATURE_DISABLED" in action.detail
+        ):
+            recovered = _find_existing_genie_agent(
+                domain_name or "domain"
+            )
+            if recovered and recovered != space_id:
+                retry = _update_existing_genie_agent(
+                    recovered,
+                    metric_view,
+                    domain_name or "domain",
+                    measures,
+                    dimensions,
+                    sample_questions,
+                )
+                if retry.status == "success":
+                    retry.detail = (
+                        "Recovered stale Genie Agent mapping automatically. "
+                        + retry.detail
+                    )
+                    return recovered, retry
+
+            created_id, create_action = _create_genie_agent(
+                metric_view,
+                domain_name or "domain",
+                measures,
+                dimensions,
+                sample_questions,
+            )
+            if created_id:
+                create_action.detail = (
+                    "Recreated the stale/missing Genie Agent automatically. "
+                    + create_action.detail
+                )
+                return created_id, create_action
+
+        return None, action
 
     if _genie_auto_create_enabled():
         return _create_genie_agent(

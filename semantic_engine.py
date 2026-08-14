@@ -1198,6 +1198,7 @@ def _master_entity_score(
         "service",
         "shipment",
         "invoice",
+        "purchase",
         "sale",
     )
     if any(

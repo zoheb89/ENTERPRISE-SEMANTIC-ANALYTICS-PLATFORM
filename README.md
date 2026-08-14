@@ -119,7 +119,8 @@ rather than a personal PAT when the target environment supports it.
 ## Genie — domain-aware and automatic
 
 Current Databricks Genie terminology is **Genie Agent**; the REST API still
-uses `/api/2.0/genie/spaces`.
+uses `/api/2.0/genie/spaces`. Databricks documents the `space_id` path
+parameter as a UUID.
 
 INVENT supports three configuration modes:
 
@@ -164,6 +165,12 @@ When a domain is published INVENT:
 Genie management failures do **not** roll back a successful semantic
 publication. The UI reports the Genie problem explicitly instead of
 pretending the Agent was connected.
+
+If an old `GENIE_SPACE_ID` is malformed or points to a deleted Agent, INVENT
+now attempts automatic recovery: it looks for an existing Agent titled
+`INVENT — <domain>`, otherwise it creates a replacement when
+`GENIE_AUTO_CREATE=true`. This prevents a stale ID from breaking the semantic
+publish flow.
 
 The current Databricks Update Space API requires a complete
 `serialized_space` replacement; INVENT retrieves the existing serialized
@@ -296,6 +303,8 @@ domain, including:
 - Travel alternate-key regression
 - Metric generation
 - Python compilation
+- Parquet and XML ingestion boundary
+- Internal single-document routing
 
 A live Databricks smoke test requires the deployment's real Streamlit
 Secrets and is therefore not executed in this source-only build.
@@ -345,249 +354,3 @@ INVENT/
 ├── demo_datasets/
 └── qa/
 ```
-
-
-## Automated QA Quality Gate
-
-INVENT runs a metadata-driven QA pass immediately after semantic analysis
-and again immediately before publication.
-
-The runtime QA gate checks:
-
-- model completeness and fact/dimension exclusivity
-- relationship endpoints and reverse duplicates
-- many-to-many candidates
-- fact-to-fact topology
-- metric uniqueness and source validity
-- empty/invalid metric expressions
-- AI suggestions remaining review-only
-- source data quality warnings
-- PII/PHI findings
-
-Blocking semantic errors disable publication. Non-blocking warnings remain
-visible and are carried into the review workflow.
-
-The **QA & Validation** page exposes the same result in the application,
-including:
-
-- Semantic Quality Score
-- passed checks
-- warnings
-- blocking failures
-- publish readiness
-
-The standalone `qa/run_qa.py` remains available for CI/CD regression
-testing across the bundled demo domains.
-
-The QA score is a quality signal, not a substitute for human governance:
-PII/PHI findings and fact-to-fact topology can be valid conditions and are
-reported as warnings rather than automatically rejected.
-
-
-## Connector-based Data Onboarding
-
-The Data Onboarding page is now a real connector boundary rather than a
-file-upload-only screen.
-
-Choose one of:
-
-### File
-- CSV
-- XLSX / XLS
-- JSON
-- Parquet
-
-### Database
-- PostgreSQL
-- MySQL
-- SQL Server
-- SQLite
-
-Database connectors discover tables and return the selected tables through
-the same `dict[str, pandas.DataFrame]` contract used by file ingestion.
-
-### REST API
-- GET or POST
-- JSON response
-- Supports a list response, a `data` array, or multiple named arrays such as
-  `{"customers": [...], "orders": [...]}`.
-
-### Cloud Storage
-- Amazon S3 (`s3://`)
-- Azure Data Lake Storage Gen2 (`abfs://`)
-
-### Databricks / Unity Catalog
-- Connect to an existing SQL Warehouse
-- Discover tables in a catalog/schema
-- Select the tables to onboard
-- Feed them into the same semantic engine
-
-The connector layer is implemented in `connector_engine.py`. It deliberately
-returns the same tabular contract regardless of source. The semantic engine
-does not know whether the data came from CSV, PostgreSQL, REST, S3 or
-Databricks.
-
-Credentials are runtime-only. They are not written into the semantic model
-or registry.
-
-**Production security recommendation:** use Streamlit Secrets, workload
-identity, cloud IAM roles, OAuth/service principals, or the organization's
-secret manager rather than personal credentials.
-
-### Connector expansion boundary
-
-Additional enterprise adapters can be added without changing semantic
-modelling:
-
-```text
-Source Connector
-      ↓
-dict[str, DataFrame]
-      ↓
-Metadata Profiler
-      ↓
-Semantic Engine
-      ↓
-QA Gate
-      ↓
-Business Model
-      ↓
-Databricks / Genie / Ask AI
-```
-
-This is the core source-agnostic design of INVENT.
-
-
-## Production-readiness: Genie status and provisioning
-
-INVENT treats Genie provisioning as a separate, auditable publication
-action. A successful Delta/Metric View publication does not imply Genie is
-connected.
-
-For a domain with multiple fact tables / Metric Views:
-
-```text
-Metric View A -> Genie registration
-Metric View B -> Genie registration
-                    |
-                    v
-             aggregate result
-                    |
-       +------------+------------+
-       |                         |
-    ALL PASS                  ANY FAIL
-       |                         |
-    CONNECTED              NOT CONNECTED
-```
-
-The UI therefore never shows **Genie Agent connected** after only one of
-several registrations succeeds.
-
-Genie IDs are normalized and validated as either a 32-character
-hexadecimal Agent ID or a UUID, matching the current Databricks API forms.
-A copied ID is stripped of surrounding whitespace before validation.
-
-The registry now records `genie_status` so Analytics/Genie pages can
-distinguish `connected`, `failed`, `pending`, and `not_configured`.
-
-Current Databricks documentation confirms:
-- Genie management uses `POST /api/2.0/genie/spaces` and
-  `PATCH /api/2.0/genie/spaces/{space_id}`.
-- Agent Mode uses
-  `POST /api/2.0/genie/agents/{agent_id}/responses`.
-- Genie Agents require Unity Catalog-backed data and a supported SQL
-  warehouse.
-
-A live Genie API smoke test is deliberately not marked PASS by local QA
-without real Databricks credentials and workspace permissions.
-
-
-## INVENT v4 — Domain-level Genie publishing
-
-### Final publication semantics
-
-The **Primary Fact / Default Analytics** selection does not limit publication.
-
-When a domain contains multiple governed facts:
-
-```text
-Automotive
-├── service_orders.csv       FACT
-└── service_parts.csv        FACT
-```
-
-INVENT publishes the complete governed model:
-
-```text
-Delta tables
-    ↓
-mv_service_orders
-mv_service_parts
-    ↓
-ONE domain Genie Agent
-    ├── mv_service_orders
-    └── mv_service_parts
-```
-
-The primary fact is only the default entry point for the Analytics/Ask AI
-experience.
-
-### Genie v4 fix
-
-Earlier versions registered Metric Views one-at-a-time. Depending on the
-Databricks Genie update behavior, this could leave an existing Genie Agent
-with only the last Metric View (for example `mv_service_parts`).
-
-v4 changes this to **one domain-level Genie configuration operation**:
-INVENT builds the complete governed Metric View list and sends it to the
-domain's Genie Agent in one update. Existing Genie configuration is preserved
-and INVENT-owned Metric Views are merged without duplicate entries.
-
-The Genie page and metadata registry now expose the complete Metric View set.
-
-### Expected Automotive result
-
-Databricks Catalog:
-
-```text
-domain_automotive
-├── customers
-├── dealers
-├── parts
-├── vehicles
-├── service_orders
-├── service_parts
-├── mv_service_orders
-└── mv_service_parts
-```
-
-Automotive Genie Agent Sources:
-
-```text
-mv_service_orders
-mv_service_parts
-```
-
-INVENT Analytics:
-
-```text
-Primary Metric View: mv_service_orders
-Governed Metric Views:
-  - mv_service_orders
-  - mv_service_parts
-```
-
-This is the final metadata-driven behavior and is not hardcoded for Automotive.
-The same pattern applies to Finance, Healthcare, Manufacturing, Retail,
-Telecom, or any future domain.
-
-### Important deployment step
-
-If an existing Genie Agent currently contains only `mv_service_parts`, v4
-does not silently assume it is correct. **Republish that domain once with v4**
-so the existing domain Genie Agent is reconciled to the complete Metric View
-set.
-
-If the configured identity cannot edit the Genie Agent, INVENT keeps Delta
-and Metric View publication successful but reports Genie as `failed` rather
-than falsely showing `connected`.

@@ -19,6 +19,7 @@ import requests
 import streamlit as st
 
 from theme import (
+    navigate_to,
     inject_base_css,
     render_sidebar_brand,
     page_header,
@@ -47,9 +48,7 @@ if not domains:
         "Go to Business Model →",
         type="primary",
     ):
-        st.switch_page(
-            "pages/4_Business_Model.py"
-        )
+        navigate_to("Business Model")
     st.stop()
 
 domain_names = [
@@ -80,11 +79,7 @@ st.markdown(
     f"""
     **Domain:** `{entry.domain_name}`
 
-    **Primary Metric View:** `{entry.metric_view}`
-
-    **Governed Metric Views:** {", ".join(entry.metric_views or [entry.metric_view])}
-
-    **Genie status:** `{entry.genie_status}`
+    **Metric View:** `{entry.metric_view}`
 
     **Measures:** {", ".join(entry.measures) or "None"}
 
@@ -100,6 +95,14 @@ if not space_id:
     )
     st.stop()
 
+if not security._is_valid_genie_agent_id(space_id):
+    st.error(
+        "This domain has a stale or invalid Genie Agent ID. "
+        "Republish the domain with automatic Genie recovery enabled."
+    )
+    st.caption(f"Configured value: `{space_id}`")
+    st.stop()
+
 genie_url = security.genie_ui_url(
     space_id
 )
@@ -109,8 +112,7 @@ st.markdown(
 )
 
 st.caption(
-    "Genie uses all governed Metric Views published for this domain and "
-    "their governed metadata to translate natural-language questions into "
+    "Genie uses the domain's published Metric View and its governed "
     "metadata to translate natural-language questions into Databricks "
     "analytics."
 )
@@ -166,13 +168,11 @@ ask = st.button(
 
 if ask:
 
-    host = st.secrets[
-        "DATABRICKS_HOST"
-    ].rstrip("/")
-
-    token = st.secrets[
-        "DATABRICKS_TOKEN"
-    ]
+    host = str(st.secrets.get("DATABRICKS_HOST", "")).rstrip("/")
+    token = str(st.secrets.get("DATABRICKS_TOKEN", ""))
+    if not host or not token:
+        st.error("Databricks authentication is not configured for Genie chat.")
+        st.stop()
 
     url = (
         f"{host}/api/2.0/genie/agents/"
