@@ -97,6 +97,37 @@ def render_sidebar_navigation():
     else:
         st.markdown('</div>',unsafe_allow_html=True)
 
+def render_user_identity(user=None):
+    """Render the signed-in user identity card.
+
+    Compatible with app.py importing/calling render_user_identity().
+    """
+    if user is None:
+        try:
+            from auth import current_user
+            user = current_user()
+        except Exception:
+            user = None
+
+    if not user:
+        return
+
+    name = str(user.get("name") or user.get("email", "").split("@")[0]).strip()
+    email = str(user.get("email", "")).strip()
+    role = str(user.get("role", "")).strip()
+
+    card = (
+        '<div class="cinvent-user-card"><div class="cinvent-user-row">'
+        f'<div class="cinvent-avatar">{_initials(name,email)}</div>'
+        '<div style="min-width:0;flex:1">'
+        f'<div class="cinvent-user-name">{name}</div>'
+        f'<div class="cinvent-user-role">{role}</div>'
+        f'<div class="cinvent-user-email">{email}</div>'
+        '</div></div></div>'
+    )
+    st.markdown(card, unsafe_allow_html=True)
+
+
 def page_header(title,subtitle):
     st.markdown(f'<div class="platform-topbar"><h1>{title}</h1><div class="platform-topbar-sub">{subtitle}</div></div>',unsafe_allow_html=True)
 
