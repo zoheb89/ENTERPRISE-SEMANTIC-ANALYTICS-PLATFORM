@@ -96,3 +96,12 @@ def section_title(title,subtitle=''):
     subtitle_html = f'<div class="platform-card-sub">{subtitle}</div>' if subtitle else ""
     html = f'<div class="platform-card-title">{title}</div>{subtitle_html}'
     st.markdown(html, unsafe_allow_html=True)
+
+def render_user_identity():
+    """Compatibility entry point used by app.py.
+
+    The identity card is intentionally rendered by render_sidebar_navigation()
+    at the bottom of the C INVENT sidebar. Keeping this function as a no-op
+    prevents the identity card from being rendered twice.
+    """
+    return None
