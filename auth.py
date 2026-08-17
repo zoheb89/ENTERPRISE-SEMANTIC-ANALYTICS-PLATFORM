@@ -72,16 +72,27 @@ def _load_users() -> list[dict[str, str]]:
     # salt = "..."
     try:
         for key in st.secrets.keys():
-            if not str(key).startswith("CINVENT_USER_") or key == "CINVENT_USERS_JSON":
+            key_text = str(key)
+            if key_text == "CINVENT_USERS_JSON":
+                continue
+            # Accept both legacy/plural and preferred/singular secret section names.
+            if not (key_text.startswith("CINVENT_USER_") or key_text.startswith("CINVENT_USERS_")):
                 continue
             value = st.secrets[key]
             if hasattr(value, "get"):
                 email = str(value.get("email", "")).strip().lower()
+                name = str(value.get("name", "")).strip()
                 role = str(value.get("role", "")).strip()
                 password_hash = str(value.get("password_hash", "")).strip()
                 salt = str(value.get("salt", "")).strip()
                 if email and role and password_hash and salt:
-                    users.append({"email": email, "role": role, "password_hash": password_hash, "salt": salt})
+                    users.append({
+                        "email": email,
+                        "name": name or email.split("@", 1)[0].replace(".", " ").replace("-", " ").title(),
+                        "role": role,
+                        "password_hash": password_hash,
+                        "salt": salt,
+                    })
     except Exception:
         pass
 
@@ -111,7 +122,7 @@ def authenticate(email: str, password: str) -> dict[str, str] | None:
         try:
             supplied = password_hash(password, user["salt"])
             if hmac.compare_digest(supplied, user["password_hash"]):
-                return {"email": email, "role": role}
+                return {"email": email, "name": user.get("name") or email.split("@", 1)[0].replace(".", " ").replace("-", " ").title(), "role": role}
         except Exception:
             return None
     return None
