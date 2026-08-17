@@ -32,6 +32,13 @@ def inject_base_css():
     .home-hero{{background:linear-gradient(135deg,#08223C,#0B4C67);border-radius:18px;padding:44px 42px;color:#fff;margin-bottom:17px;box-shadow:0 18px 45px rgba(8,34,60,.13)}} .home-hero .eyebrow{{color:#57D1D7;font-size:10px;font-weight:900;letter-spacing:1.8px}} .home-hero h1{{font-size:40px;line-height:1.08;margin:10px 0 12px;color:#fff}} .home-hero p{{max-width:760px;color:#B9D0DF;font-size:14px;line-height:1.65}}
     .c-card{{background:#fff;border:1px solid {LINE};border-radius:12px;padding:16px;height:100%}} .c-card h3{{font-size:14px;margin:0 0 6px;color:{NAVY}}} .c-card p{{font-size:11px;color:{SOFT};margin:0;line-height:1.55}}
     .flow{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 18px}} .flow span{{padding:7px 10px;background:#fff;border:1px solid {LINE};border-radius:999px;font-size:10px;font-weight:800;color:#53687C}} .flow span.active{{background:#EAF7F8;border-color:#BDE0E4;color:{TEAL}}}
+    
+    .cinvent-user-card{{display:flex;align-items:center;gap:9px;padding:8px 8px;margin:3px 3px 7px;border:1px solid rgba(255,255,255,.12);border-radius:11px;background:rgba(255,255,255,.055)}}
+    .cinvent-user-avatar{{width:30px;height:30px;min-width:30px;border-radius:50%;background:linear-gradient(135deg,#0A8FA3,#0875D1);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:11px}}
+    .cinvent-user-details{{min-width:0;line-height:1.15}}
+    .cinvent-user-name{{color:#fff;font-size:10.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+    .cinvent-user-role{{color:#57D1D7;font-size:8.5px;font-weight:800;margin-top:2px;white-space:nowrap}}
+    .cinvent-user-email{{color:#8FA5B9;font-size:7.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
     </style>''',unsafe_allow_html=True)
 
 def navigate_to(page_name:str):
@@ -60,3 +67,26 @@ def section_title(title,subtitle=''):
     subtitle_html = f'<div class="platform-card-sub">{subtitle}</div>' if subtitle else ""
     html = f'<div class="platform-card-title">{title}</div>{subtitle_html}'
     st.markdown(html, unsafe_allow_html=True)
+
+
+def render_user_identity():
+    """Show the authenticated C INVENT user's name and role in the sidebar."""
+    if not st.session_state.get("cinvent_authenticated"):
+        return
+    email = str(st.session_state.get("cinvent_email", ""))
+    name = str(st.session_state.get("cinvent_name", "")).strip()
+    if not name:
+        name = email.split("@", 1)[0].replace(".", " ").replace("-", " ").title()
+    role = str(st.session_state.get("cinvent_role", "User"))
+    initials = "".join(part[:1] for part in name.split()[:2]).upper() or "U"
+    with st.sidebar:
+        st.markdown(
+            f'<div class="cinvent-user-card">'
+            f'<div class="cinvent-user-avatar">{initials}</div>'
+            f'<div class="cinvent-user-details">'
+            f'<div class="cinvent-user-name">{name}</div>'
+            f'<div class="cinvent-user-role">{role}</div>'
+            f'<div class="cinvent-user-email">{email}</div>'
+            f'</div></div>',
+            unsafe_allow_html=True
+        )

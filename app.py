@@ -1,7 +1,7 @@
 from pathlib import Path
 import runpy
 import streamlit as st
-from theme import inject_base_css, render_sidebar_brand, render_sidebar_navigation
+from theme import inject_base_css, render_sidebar_brand, render_sidebar_navigation, render_user_identity
 from auth import auth_enabled, require_login, can_access, current_user
 
 st.set_page_config(page_title='C INVENT — Enterprise Semantic Analytics',page_icon='C',layout='wide',initial_sidebar_state='expanded')
@@ -12,6 +12,9 @@ inject_base_css()
 if auth_enabled():
     if not require_login():
         st.stop()
+
+# Authenticated user identity — visible in the C INVENT sidebar.
+render_user_identity()
 
 # F5/browser refresh must return to Home, while normal button reruns retain the page.
 try:
