@@ -13,9 +13,6 @@ if auth_enabled():
     if not require_login():
         st.stop()
 
-# Authenticated user identity — visible in the C INVENT sidebar.
-render_user_identity()
-
 # F5/browser refresh must return to Home, while normal button reruns retain the page.
 try:
     from streamlit_js_eval import streamlit_js_eval
@@ -28,7 +25,7 @@ except Exception:
 
 if '_invent_current_page' not in st.session_state:
     st.session_state['_invent_current_page']='Home'
-render_sidebar_brand(); render_sidebar_navigation()
+render_sidebar_brand(); render_sidebar_navigation(); render_user_identity()
 VIEWS={
 'Home':'0_Home.py','Data Onboarding':'1_Data_Onboarding.py','AI Analysis':'2_AI_Analysis.py','Semantic Intelligence':'3_Semantic_Intelligence.py','Business Model':'4_Business_Model.py','QA Validation':'9_QA_Validation.py','Analytics':'5_Analytics.py','Ask AI':'6_Ask_AI.py','Genie Agent':'8_Genie.py','Security Center':'7_Security_Center.py','Databricks Discovery':'10_Databricks_Discovery.py','Connectors':'11_Connectors.py','Audit & Policies':'12_Audit.py'}
 current=st.session_state.get('_invent_current_page','Home')
