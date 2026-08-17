@@ -11,9 +11,13 @@ def inject_base_css():
     [data-testid="stHeader"]{{background:#fff;border-bottom:1px solid {LINE}}}
     [data-testid="stSidebar"]{{background:{NAVY}!important;border-right:1px solid rgba(255,255,255,.08);min-width:255px!important}}
     [data-testid="stSidebar"]>div:first-child{{padding:.12rem .42rem .25rem!important}}
-    [data-testid="stSidebarContent"]{{padding:.05rem .08rem .25rem!important;overflow-y:auto!important;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}}
-    .cinvent-sidebar-nav{{display:flex;flex-direction:column;min-height:calc(100vh - 76px)}}
-    .cinvent-user-bottom{{margin-top:auto!important;padding-top:8px;border-top:1px solid rgba(255,255,255,.10)}}
+    [data-testid="stSidebarContent"]{{padding:.05rem .08rem 5.6rem!important;overflow-y:auto!important;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}}
+    [data-testid="stSidebar"] .cinvent-identity-card{{position:fixed;left:10px;bottom:10px;width:235px;box-sizing:border-box;z-index:1000;background:#142B45;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:9px 10px;box-shadow:0 10px 28px rgba(0,0,0,.24)}}
+    [data-testid="stSidebar"] .cinvent-identity-row{{display:flex;align-items:center;gap:9px}}
+    [data-testid="stSidebar"] .cinvent-identity-avatar{{width:32px;height:32px;min-width:32px;border-radius:50%;background:linear-gradient(135deg,#0A8FA3,#0875D1);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:900}}
+    [data-testid="stSidebar"] .cinvent-identity-name{{color:#fff;font-size:10.5px;font-weight:800;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+    [data-testid="stSidebar"] .cinvent-identity-role{{color:#57D1D7;font-size:9px;font-weight:800;margin-top:2px}}
+    [data-testid="stSidebar"] .cinvent-identity-email{{color:#8FA5B9;font-size:7.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
     [data-testid="stSidebarUserContent"]{{padding-bottom:.25rem!important}}
     [data-testid="stSidebar"] [data-testid="stButton"]{{width:100%;margin:0!important;padding:0!important}}
     [data-testid="stSidebar"] [data-testid="stButton"] button{{width:100%!important;min-height:27px!important;height:27px!important;border:1px solid transparent!important;border-radius:9px!important;background:transparent!important;color:#C9D7E5!important;box-shadow:none!important;justify-content:flex-start!important;text-align:left!important;padding:.06rem .45rem!important;font-size:11px!important;font-weight:600!important}}
@@ -34,13 +38,6 @@ def inject_base_css():
     .home-hero{{background:linear-gradient(135deg,#08223C,#0B4C67);border-radius:18px;padding:44px 42px;color:#fff;margin-bottom:17px;box-shadow:0 18px 45px rgba(8,34,60,.13)}} .home-hero .eyebrow{{color:#57D1D7;font-size:10px;font-weight:900;letter-spacing:1.8px}} .home-hero h1{{font-size:40px;line-height:1.08;margin:10px 0 12px;color:#fff}} .home-hero p{{max-width:760px;color:#B9D0DF;font-size:14px;line-height:1.65}}
     .c-card{{background:#fff;border:1px solid {LINE};border-radius:12px;padding:16px;height:100%}} .c-card h3{{font-size:14px;margin:0 0 6px;color:{NAVY}}} .c-card p{{font-size:11px;color:{SOFT};margin:0;line-height:1.55}}
     .flow{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 18px}} .flow span{{padding:7px 10px;background:#fff;border:1px solid {LINE};border-radius:999px;font-size:10px;font-weight:800;color:#53687C}} .flow span.active{{background:#EAF7F8;border-color:#BDE0E4;color:{TEAL}}}
-    
-    .cinvent-user-card{{display:flex;align-items:center;gap:9px;padding:9px 8px;margin:10px 3px 3px;border:1px solid rgba(255,255,255,.12);border-radius:11px;background:rgba(255,255,255,.055);box-shadow:0 -6px 18px rgba(0,0,0,.08)}}
-    .cinvent-user-avatar{{width:30px;height:30px;min-width:30px;border-radius:50%;background:linear-gradient(135deg,#0A8FA3,#0875D1);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:11px}}
-    .cinvent-user-details{{min-width:0;line-height:1.15}}
-    .cinvent-user-name{{color:#fff;font-size:10.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-    .cinvent-user-role{{color:#57D1D7;font-size:8.5px;font-weight:800;margin-top:2px;white-space:nowrap}}
-    .cinvent-user-email{{color:#8FA5B9;font-size:7.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
     </style>''',unsafe_allow_html=True)
 
 def navigate_to(page_name:str):
@@ -57,40 +54,45 @@ def render_sidebar_brand():
 def render_sidebar_navigation():
     current=st.session_state.get('_invent_current_page','Home')
     with st.sidebar:
-        st.markdown('<div class="cinvent-sidebar-nav">',unsafe_allow_html=True)
         if st.button('⌂  Home',key='nav_home',use_container_width=True,type='primary' if current=='Home' else 'secondary'): navigate_to('Home')
         for heading,pages in NAV_GROUPS:
             st.markdown(f'<div class="invent-nav-heading">{heading}</div>',unsafe_allow_html=True)
             for page,icon in pages:
                 if st.button(f'{icon}  {page}',key='nav_'+page.lower().replace(' ','_'),use_container_width=True,type='primary' if current==page else 'secondary'): navigate_to(page)
-        st.markdown('</div>',unsafe_allow_html=True)
 
+        # Signed-in identity stays at the bottom of the C INVENT navigation.
+        try:
+            from auth import current_user
+            user = current_user()
+        except Exception:
+            user = None
+
+        if user:
+            email = user.get('email', '')
+            role = user.get('role', '')
+            local_part = email.split('@', 1)[0] if '@' in email else email
+            display_name = ' '.join(part.capitalize() for part in local_part.replace('-', ' ').replace('_', ' ').split())
+            if not display_name:
+                display_name = 'C INVENT User'
+            initials = ''.join(part[0].upper() for part in display_name.split()[:2]) or 'CI'
+            st.markdown(
+                f'''<div class="cinvent-identity-card">
+                    <div class="cinvent-identity-row">
+                        <div class="cinvent-identity-avatar">{initials}</div>
+                        <div style="min-width:0;flex:1">
+                            <div class="cinvent-identity-name">{display_name}</div>
+                            <div class="cinvent-identity-role">{role}</div>
+                            <div class="cinvent-identity-email">{email}</div>
+                        </div>
+                    </div>
+                </div>''',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown('<div class="cinvent-identity-card"><div class="cinvent-identity-name">C INVENT</div></div>', unsafe_allow_html=True)
 
 def page_header(title,subtitle): st.markdown(f'<div class="platform-topbar"><h1>{title}</h1><div class="platform-topbar-sub">{subtitle}</div></div>',unsafe_allow_html=True)
 def section_title(title,subtitle=''):
     subtitle_html = f'<div class="platform-card-sub">{subtitle}</div>' if subtitle else ""
     html = f'<div class="platform-card-title">{title}</div>{subtitle_html}'
     st.markdown(html, unsafe_allow_html=True)
-
-
-def render_user_identity():
-    """Show the authenticated user's identity at the bottom of the C INVENT sidebar."""
-    if not st.session_state.get("cinvent_authenticated"):
-        return
-    email = str(st.session_state.get("cinvent_email", ""))
-    name = str(st.session_state.get("cinvent_name", "")).strip()
-    if not name:
-        name = email.split("@", 1)[0].replace(".", " ").replace("-", " ").title()
-    role = str(st.session_state.get("cinvent_role", "User"))
-    initials = "".join(part[:1] for part in name.split()[:2]).upper() or "U"
-    with st.sidebar:
-        st.markdown(
-            f'<div class="cinvent-user-bottom"><div class="cinvent-user-card">'
-            f'<div class="cinvent-user-avatar">{initials}</div>'
-            f'<div class="cinvent-user-details">'
-            f'<div class="cinvent-user-name">{name}</div>'
-            f'<div class="cinvent-user-role">{role}</div>'
-            f'<div class="cinvent-user-email">{email}</div>'
-            f'</div></div></div>',
-            unsafe_allow_html=True
-        )
