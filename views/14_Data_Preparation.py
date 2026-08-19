@@ -24,7 +24,7 @@ c2.metric("Rows",f"{s['rows']:,}")
 c3.metric("Columns",s["columns"])
 c4.metric("Quality Findings",s["findings"])
 c5.metric("Warnings",s["warnings"])
-c6.metric("Review Required",s.get("review_required", sum(1 for f in findings if not getattr(f, "auto_safe", True))))
+c6.metric("Human Review Required", s.get("review_required", sum(1 for f in findings if not getattr(f, "auto_safe", True))))
 
 st.markdown("### Raw-data quality profile")
 st.caption("DataPrepAI does not assume the source is clean. It profiles the source first and makes explainable, deterministic recommendations.")
@@ -93,6 +93,51 @@ with st.container(border=True):
                     "Semantic analysis will use the prepared data. "
                     "No additional human review is required."
                 )
+
+# Explicit human-review queue: show every finding that was intentionally
+# NOT auto-remediated, rather than only reporting the count in the success toast.
+review_findings = [
+    f for f in findings
+    if not getattr(f, "auto_safe", True)
+]
+
+if review_findings:
+    with st.container(border=True):
+        st.markdown("### ⚠ Human Review Required")
+        st.warning(
+            f"{len(review_findings)} finding(s) require human review. "
+            "DataPrepAI did not automatically change these items."
+        )
+
+        review_rows = []
+        for f in review_findings:
+            review_rows.append({
+                "Table": f.table,
+                "Finding": f.issue,
+                "Category": getattr(f, "category", "Data Quality"),
+                "Severity": getattr(f, "severity", "warning").title(),
+                "Affected Rows": f.affected_rows,
+                "Recommended Action": f.recommendation,
+            })
+
+        st.dataframe(
+            pd.DataFrame(review_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.caption(
+            "Human review is required because these findings may require a "
+            "business or security decision. PII/PHI findings should be "
+            "reviewed in Security Center; DataPrepAI does not automatically "
+            "mask or invent replacement values."
+        )
+else:
+    with st.container(border=True):
+        st.success(
+            "No findings require human review. All detected preparation "
+            "actions are deterministic and auto-safe."
+        )
 
 if st.session_state.get("prep_actions"):
     with st.container(border=True):
