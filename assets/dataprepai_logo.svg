@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="220" viewBox="0 0 900 220">
+<defs>
+  <linearGradient id="dp" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#00A7B5"/>
+    <stop offset="0.55" stop-color="#0875D1"/>
+    <stop offset="1" stop-color="#6B35F5"/>
+  </linearGradient>
+</defs>
+<rect width="900" height="220" rx="32" fill="#ffffff"/>
+<!-- DataPrepAI mark: data nodes + preparation funnel / AI spark -->
+<g transform="translate(34 35)">
+  <rect x="0" y="0" width="150" height="150" rx="36" fill="#0B1F36"/>
+  <path d="M43 102 L76 62 L108 102" stroke="url(#dp)" stroke-width="11" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M76 62 L76 119" stroke="url(#dp)" stroke-width="11" fill="none" stroke-linecap="round"/>
+  <circle cx="43" cy="102" r="13" fill="#00A7B5"/>
+  <circle cx="76" cy="62" r="13" fill="#0875D1"/>
+  <circle cx="108" cy="102" r="13" fill="#6B35F5"/>
+  <path d="M114 35 l4 12 12 4-12 4-4 12-4-12-12-4 12-4z" fill="#ffffff"/>
+</g>
+<text x="220" y="80" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#0875D1">Capgemini</text>
+<text x="220" y="139" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="800" fill="#0B1F36">DataPrep<tspan fill="#6B35F5">AI</tspan></text>
+<text x="222" y="177" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="600" letter-spacing="1.8" fill="#6C7E91">DATA PREPARATION • SEMANTIC ANALYTICS • AI</text>
+</svg>

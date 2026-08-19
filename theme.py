@@ -3,9 +3,9 @@ import streamlit as st
 NAVY="#0B1F36"; TEAL="#0A8FA3"; TEAL2="#087B8C"; CANVAS="#F4F7FA"; SLATE="#23364D"; SOFT="#6C7E91"; LINE="#DCE5ED"; GREEN="#168A58"; GREEN_LIGHT="#EAF8F1"; AMBER="#C77A19"; AMBER_LIGHT="#FFF6E6"; RED="#B84B45"
 
 NAV_GROUPS=[
-    ("ONBOARD",[("Data Onboarding","⇧"),("Databricks Discovery","⌘")]),
+    ("ONBOARD",[("Data Onboarding","⇧"),("Data Preparation","✚"),("Databricks Discovery","⌘")]),
     ("MODEL",[("AI Analysis","✦"),("Semantic Intelligence","◈"),("Business Model","◇"),("QA Validation","✓")]),
-    ("ANALYZE",[("Analytics","▥"),("Ask AI","▤"),("Genie Agent","✧")]),
+    ("ANALYZE",[("Analytics","▥"),("AI/BI Dashboard","◫"),("Ask AI","▤"),("Genie Agent","✧")]),
     ("GOVERN",[("Security Center","◇"),("Connectors","↗"),("Audit & Policies","◷")]),
 ]
 
@@ -36,8 +36,12 @@ html,body,[class*="css"]{{font-family:Inter,system-ui,sans-serif}}
 
 .invent-brand{{display:flex;align-items:center;gap:8px;padding:0 4px 5px;margin:0 0 3px;border-bottom:1px solid rgba(255,255,255,.11)}}
 .invent-logo{{width:28px;height:28px;min-width:28px;border-radius:10px;background:linear-gradient(135deg,#0A8FA3,#0875D1);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:16px}}
-.invent-brand-name{{color:#fff;font-weight:800;font-size:13px;line-height:1}}
-.invent-brand-sub{{color:#8FA5B9;font-size:8px;margin-top:3px;letter-spacing:.25px}}
+.invent-brand-name{{color:#fff;font-weight:700;font-size:11px;line-height:1}}
+.invent-brand-product{{color:#fff;font-weight:900;font-size:14px;line-height:1.1;margin-top:2px}}
+.invent-brand-product span{{color:#8B5CF6}}
+.invent-brand-sub{{color:#8FA5B9;font-size:6.5px;margin-top:4px;letter-spacing:.45px}}
+.dataprepai-mark{{font-size:9px!important;letter-spacing:-.4px}}
+.dataprepai-mark span{{color:#B7A3FF}}
 .invent-nav-heading{{color:#6F879B;font-size:7.5px;font-weight:900;letter-spacing:1.5px;margin:4px 5px 1px;line-height:11px}}
 
 .platform-topbar{{background:#fff;border:1px solid {LINE};border-radius:13px;padding:17px 22px;margin-bottom:17px;box-shadow:0 2px 8px rgba(16,42,73,.035)}}
@@ -72,7 +76,14 @@ def navigate_to(page_name:str):
 
 def render_sidebar_brand():
     with st.sidebar:
-        st.markdown("""<div class="invent-brand"><div class="invent-logo">C</div><div><div class="invent-brand-name">C INVENT</div><div class="invent-brand-sub">Enterprise Semantic Analytics Platform</div></div></div>""",unsafe_allow_html=True)
+        st.markdown("""<div class="invent-brand">
+        <div class="invent-logo dataprepai-mark">DP<span>AI</span></div>
+        <div>
+          <div class="invent-brand-name">Capgemini</div>
+          <div class="invent-brand-product">DataPrep<span>AI</span></div>
+          <div class="invent-brand-sub">DATA PREPARATION • SEMANTIC ANALYTICS • AI</div>
+        </div>
+        </div>""",unsafe_allow_html=True)
 
 def _render_identity_card():
     try:
@@ -85,7 +96,7 @@ def _render_identity_card():
     email=user.get("email","")
     role=user.get("role","")
     local_part=email.split("@",1)[0] if "@" in email else email
-    display_name=" ".join(p.capitalize() for p in local_part.replace("-"," ").replace("_"," ").split()) or "C INVENT User"
+    display_name=" ".join(p.capitalize() for p in local_part.replace("-"," ").replace("_"," ").split()) or "DataPrepAI User"
     initials="".join(p[0].upper() for p in display_name.split()[:2]) or "CI"
     st.markdown(f"""<div class="cinvent-identity-card"><div class="cinvent-identity-row"><div class="cinvent-identity-avatar">{initials}</div><div style="min-width:0;flex:1"><div class="cinvent-identity-name">{display_name}</div><div class="cinvent-identity-role">{role}</div><div class="cinvent-identity-email">{email}</div></div></div></div>""",unsafe_allow_html=True)
 

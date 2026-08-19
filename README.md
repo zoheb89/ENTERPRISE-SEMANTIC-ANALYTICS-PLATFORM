@@ -1,4 +1,4 @@
-# C INVENT — Enterprise Semantic Analytics Platform
+# Capgemini DataPrepAI — Enterprise Data Preparation, Semantic Analytics & AI Platform
 
 ## Production Product README — 2026
 
@@ -1130,3 +1130,66 @@ ASK
 ### One platform.
 ### Multiple business domains.
 ### One governed semantic foundation.
+
+
+---
+
+# DataPrepAI Enhancements
+
+## Raw / Bad Data Preparation
+
+DataPrepAI does not require the source to be clean before profiling.
+
+The Data Preparation stage:
+
+- profiles null and blank values
+- detects exact duplicate rows
+- identifies mixed numeric text
+- identifies inconsistent date/time values
+- normalizes column names
+- trims string values
+- converts blank strings to null
+- safely standardizes high-confidence numeric/date values
+- previews raw vs prepared data
+- records applied preparation actions
+
+Safe preparation is deterministic and reviewable. DataPrepAI does not invent business values or silently delete non-duplicate business records.
+
+The semantic AI analysis consumes the prepared dataset after the user applies the preparation step.
+
+## AI / BI Dashboard
+
+The AI/BI Dashboard stage uses the governed semantic metadata to recommend:
+
+- executive KPI cards
+- measure-by-dimension visualizations
+- time trends when a time-like dimension is detected
+- dashboard layout candidates
+
+Dashboard recommendations are reviewable before production publication.
+
+The current application provides the metadata-driven recommendation layer. A production Databricks AI/BI execution layer can then query the governed Metric View and render/publish the approved dashboard.
+
+## Shared Login
+
+The demo/workspace login is configured through Streamlit Secrets:
+
+```toml
+[DATAPREPAI_AUTH]
+email = "cinvent@capgemini.com"
+password = "<replace-with-a-new-secret>"
+role = "Admin"
+name = "DataPrepAI Shared User"
+```
+
+Do not commit `.streamlit/secrets.toml`. For enterprise production, replace the shared identity with organizational SSO/OIDC.
+
+## Branding
+
+Application display name:
+
+**CAPGEMINI DataPrepAI**
+
+Tagline:
+
+**Enterprise Data Preparation, Semantic Analytics & AI Platform**

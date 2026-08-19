@@ -288,14 +288,12 @@ if go:
     st.session_state.llm_suggestion_count = 0
 
     # Store only this run's files.
-    st.session_state.uploaded_files = {
-        name: dataframe.copy()
-        for name, dataframe in files.items()
-    }
+    st.session_state.raw_uploaded_files = {name: dataframe.copy() for name, dataframe in files.items()}
+    st.session_state.uploaded_files = {name: dataframe.copy() for name, dataframe in files.items()}
 
     st.session_state.stage = "processing"
 
-    navigate_to("AI Analysis")
+    navigate_to("Data Preparation")
 
 
 

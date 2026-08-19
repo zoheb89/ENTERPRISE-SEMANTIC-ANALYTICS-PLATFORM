@@ -4,12 +4,12 @@ from theme import page_header, section_title
 import security_fabric as security
 
 BUILD = "2026.08.14-FINAL-02"
-page_header("Deployment Verification", "Prove that the deployed Streamlit app is the C INVENT production build — not an older cached/repo version.")
+page_header("Deployment Verification", "Prove that the deployed Streamlit app is the DataPrepAI production build — not an older cached/repo version.")
 
 st.markdown(f'<div class="platform-banner info"><b>Build fingerprint:</b> <code>C-INVENT-{BUILD}</code><br>If this fingerprint is not visible, the deployed app is NOT running this package.</div>', unsafe_allow_html=True)
 
 checks = [
-    ("C INVENT navigation", True, "Custom single-document navigation is active."),
+    ("DataPrepAI navigation", True, "Custom single-document navigation is active."),
     ("Data Onboarding", True, "CSV / XLSX / JSON / Parquet / XML routes are included."),
     ("Databricks Discovery", True, "Live Unity Catalog discovery route is included."),
     ("Semantic Intelligence", True, "Relationship / fact / dimension analysis route is included."),

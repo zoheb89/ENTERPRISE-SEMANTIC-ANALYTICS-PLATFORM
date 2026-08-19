@@ -12,7 +12,7 @@ try:
     catalogs = discovery.list_catalogs()
 except Exception as e:
     st.error(f'Unity Catalog discovery failed: {e}')
-    st.caption('C INVENT uses Databricks SQL INFORMATION_SCHEMA for discovery so it works across Databricks Free Edition/workspace API variations.')
+    st.caption('DataPrepAI uses Databricks SQL INFORMATION_SCHEMA for discovery so it works across Databricks Free Edition/workspace API variations.')
     st.stop()
 
 preferred = st.secrets.get('DATABRICKS_CATALOG','')
@@ -89,7 +89,7 @@ try:
     st.divider()
     section_title('Relationships','Declared Unity Catalog foreign-key relationships. These are not guessed from column names.')
     if relationships.empty:
-        st.info('No declared foreign-key relationships are exposed for this catalog. C INVENT does not fabricate relationships in the live discovery view.')
+        st.info('No declared foreign-key relationships are exposed for this catalog. DataPrepAI does not fabricate relationships in the live discovery view.')
     else:
         st.dataframe(relationships, use_container_width=True, hide_index=True)
 
