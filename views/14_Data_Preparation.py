@@ -24,7 +24,7 @@ c2.metric("Rows",f"{s['rows']:,}")
 c3.metric("Columns",s["columns"])
 c4.metric("Quality Findings",s["findings"])
 c5.metric("Warnings",s["warnings"])
-c6.metric("Review Required",s["review_required"])
+c6.metric("Review Required",s.get("review_required", sum(1 for f in findings if not getattr(f, "auto_safe", True))))
 
 st.markdown("### Raw-data quality profile")
 st.caption("DataPrepAI does not assume the source is clean. It profiles the source first and makes explainable, deterministic recommendations.")
@@ -33,20 +33,20 @@ if findings:
     rows=[{
         "Table":f.table,
         "Issue":f.issue,
-        "Category":f.category,
-        "Severity":f.severity.title(),
+        "Category":getattr(f, "category", "Data Quality"),
+        "Severity":getattr(f, "severity", "warning").title(),
         "Affected Rows":f.affected_rows,
-        "Auto-safe": "Yes" if f.auto_safe else "No",
+        "Auto-safe": "Yes" if getattr(f, "auto_safe", True) else "No",
         "Recommended Action":f.recommendation,
     } for f in findings]
     st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
 
     # High-level review buckets.
     a,b,c,d = st.columns(4)
-    a.metric("Auto-fixable",s["auto_safe"])
-    b.metric("Human Review",s["review_required"])
-    c.metric("Security Findings",sum(1 for f in findings if f.category=="Security"))
-    d.metric("Data Quality Warnings",sum(1 for f in findings if f.severity=="warning"))
+    a.metric("Auto-fixable",s.get("auto_safe", sum(1 for f in findings if getattr(f, "auto_safe", True))))
+    b.metric("Human Review",s.get("review_required", sum(1 for f in findings if not getattr(f, "auto_safe", True))))
+    c.metric("Security Findings",sum(1 for f in findings if getattr(f, "category", "")=="Security"))
+    d.metric("Data Quality Warnings",sum(1 for f in findings if getattr(f, "severity", "")=="warning"))
 else:
     st.success("No material preparation findings detected in the current source.")
 
@@ -66,7 +66,20 @@ with st.container(border=True):
             st.session_state.prepared_preview=cleaned
             st.session_state.prep_actions=applied
             st.session_state.data_prep_approved=True
-            st.success(f"Applied {len(applied)} deterministic preparation actions. Semantic analysis will use the prepared data.")
+            auto_safe_actions = len(applied)
+review_required = s.get("review_required", sum(1 for f in findings if not getattr(f, "auto_safe", True)))
+if review_required:
+    st.success(
+        f"Applied {auto_safe_actions} Auto-Safe Actions. "
+        f"Semantic analysis will use the prepared data. "
+        f"{review_required} finding(s) remain for human review."
+    )
+else:
+    st.success(
+        f"Applied {auto_safe_actions} Auto-Safe Actions. "
+        "Semantic analysis will use the prepared data. "
+        "No additional human review is required."
+    )
 
 if st.session_state.get("prep_actions"):
     with st.container(border=True):
