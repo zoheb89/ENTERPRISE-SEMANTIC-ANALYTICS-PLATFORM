@@ -65,21 +65,34 @@ with st.container(border=True):
             st.session_state.uploaded_files=cleaned
             st.session_state.prepared_preview=cleaned
             st.session_state.prep_actions=applied
-            st.session_state.data_prep_approved=True
-            auto_safe_actions = len(applied)
-review_required = s.get("review_required", sum(1 for f in findings if not getattr(f, "auto_safe", True)))
-if review_required:
-    st.success(
-        f"Applied {auto_safe_actions} Auto-Safe Actions. "
-        f"Semantic analysis will use the prepared data. "
-        f"{review_required} finding(s) remain for human review."
-    )
-else:
-    st.success(
-        f"Applied {auto_safe_actions} Auto-Safe Actions. "
-        "Semantic analysis will use the prepared data. "
-        "No additional human review is required."
-    )
+            st.session_state.data_prep_approved = True
+
+            review_required = s.get(
+                "review_required",
+                sum(
+                    1
+                    for f in findings
+                    if not getattr(f, "auto_safe", True)
+                )
+            )
+
+            st.session_state.prep_apply_result = {
+                "auto_safe_actions": len(applied),
+                "review_required": review_required,
+            }
+
+            if review_required:
+                st.success(
+                    f"Applied {len(applied)} Auto-Safe Actions. "
+                    "Semantic analysis will use the prepared data. "
+                    f"{review_required} finding(s) remain for human review."
+                )
+            else:
+                st.success(
+                    f"Applied {len(applied)} Auto-Safe Actions. "
+                    "Semantic analysis will use the prepared data. "
+                    "No additional human review is required."
+                )
 
 if st.session_state.get("prep_actions"):
     with st.container(border=True):
