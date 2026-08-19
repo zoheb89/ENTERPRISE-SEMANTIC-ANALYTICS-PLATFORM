@@ -256,18 +256,60 @@ def profile_raw(files: dict[str, pd.DataFrame]) -> list[PrepFinding]:
 
     return findings
 
+def _canonicalize_case_variants(series: pd.Series) -> pd.Series:
+    """Normalize values that differ only by whitespace/case.
+
+    Example: Active / ACTIVE / active -> Active.
+    The first-seen spelling is retained as the canonical business value.
+    No new business value is invented.
+    """
+    if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+        return series
+
+    first_seen = {}
+    for value in series.dropna():
+        text = str(value).strip()
+        if text and text.casefold() not in first_seen:
+            first_seen[text.casefold()] = text
+
+    def canonical(value):
+        if pd.isna(value):
+            return value
+        text = str(value).strip()
+        if not text:
+            return pd.NA
+        return first_seen.get(text.casefold(), text)
+
+    return series.map(canonical)
+
+
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out=df.copy()
-    seen=set(); cols=[]
+    out = df.copy()
+    seen = set()
+    cols = []
+
+    # Normalize column names.
     for raw in out.columns:
-        n=str(raw).strip().replace("\n"," ").replace("\r"," ")
-        n="_".join(n.split())
-        if not n: n="unnamed_column"
-        base=n; i=2
+        n = str(raw).strip().replace("\n", " ").replace("\r", " ")
+        n = "_".join(n.split())
+        if not n:
+            n = "unnamed_column"
+        base = n
+        i = 2
         while n.lower() in seen:
-            n=f"{base}_{i}"; i+=1
-        seen.add(n.lower()); cols.append(n)
-    out.columns=cols
+            n = f"{base}_{i}"
+            i += 1
+        seen.add(n.lower())
+        cols.append(n)
+    out.columns = cols
+
+    # Normalize safe textual values.
+    for col in out.columns:
+        s = out[col]
+        if pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s):
+            s = s.astype("string").str.strip().replace({"": pd.NA})
+            out[col] = _canonicalize_case_variants(s)
+
     return out
 
 def _canonical_bool(s: pd.Series) -> pd.Series:
@@ -328,13 +370,13 @@ def prepare_raw_files(files: dict[str,pd.DataFrame], findings: list[PrepFinding]
 
 def summary(files: dict[str,pd.DataFrame], findings: list[PrepFinding]) -> dict[str,Any]:
     return {
-        "tables":len(files),
-        "rows":sum(len(df) for df in files.values()),
-        "columns":sum(len(df.columns) for df in files.values()),
-        "findings":len(findings),
-        "critical":sum(1 for f in findings if f.severity=="critical"),
-        "warnings":sum(1 for f in findings if f.severity=="warning"),
-        "info":sum(1 for f in findings if f.severity=="info"),
-        "auto_safe":sum(1 for f in findings if f.auto_safe),
-        "review_required":sum(1 for f in findings if not f.auto_safe),
+        "tables": len(files),
+        "rows": sum(len(df) for df in files.values()),
+        "columns": sum(len(df.columns) for df in files.values()),
+        "findings": len(findings),
+        "critical": sum(1 for f in findings if getattr(f, "severity", "") == "critical"),
+        "warnings": sum(1 for f in findings if getattr(f, "severity", "") == "warning"),
+        "info": sum(1 for f in findings if getattr(f, "severity", "") == "info"),
+        "auto_safe": sum(1 for f in findings if getattr(f, "auto_safe", True)),
+        "review_required": sum(1 for f in findings if not getattr(f, "auto_safe", True)),
     }
