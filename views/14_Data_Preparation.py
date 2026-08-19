@@ -17,25 +17,42 @@ if not raw:
 
 findings = profile_raw(raw)
 s = summary(raw, findings)
-c1,c2,c3,c4,c5 = st.columns(5)
-c1.metric("Tables",s["tables"]); c2.metric("Rows",f"{s['rows']:,}"); c3.metric("Columns",s["columns"])
-c4.metric("Quality Findings",s["findings"]); c5.metric("Warnings",s["warnings"])
+
+c1,c2,c3,c4,c5,c6 = st.columns(6)
+c1.metric("Tables",s["tables"])
+c2.metric("Rows",f"{s['rows']:,}")
+c3.metric("Columns",s["columns"])
+c4.metric("Quality Findings",s["findings"])
+c5.metric("Warnings",s["warnings"])
+c6.metric("Review Required",s["review_required"])
 
 st.markdown("### Raw-data quality profile")
 st.caption("DataPrepAI does not assume the source is clean. It profiles the source first and makes explainable, deterministic recommendations.")
 
 if findings:
     rows=[{
-        "Table":f.table,"Issue":f.issue,"Severity":f.severity.title(),
-        "Affected Rows":f.affected_rows,"Recommendation":f.recommendation
+        "Table":f.table,
+        "Issue":f.issue,
+        "Category":f.category,
+        "Severity":f.severity.title(),
+        "Affected Rows":f.affected_rows,
+        "Auto-safe": "Yes" if f.auto_safe else "No",
+        "Recommended Action":f.recommendation,
     } for f in findings]
     st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+
+    # High-level review buckets.
+    a,b,c,d = st.columns(4)
+    a.metric("Auto-fixable",s["auto_safe"])
+    b.metric("Human Review",s["review_required"])
+    c.metric("Security Findings",sum(1 for f in findings if f.category=="Security"))
+    d.metric("Data Quality Warnings",sum(1 for f in findings if f.severity=="warning"))
 else:
     st.success("No material preparation findings detected in the current source.")
 
 with st.container(border=True):
     st.markdown("### Preparation policy")
-    st.info("Safe actions are deterministic and previewable. DataPrepAI does not invent business values, silently delete non-duplicate records, or auto-approve semantic changes.")
+    st.info("Safe actions are deterministic and previewable. DataPrepAI does not invent business values, silently delete non-duplicate records, or auto-approve semantic changes. Referential-integrity issues are validated later by Semantic Intelligence / QA.")
     col1,col2=st.columns(2)
     with col1:
         if st.button("Preview Cleansing",use_container_width=True):
@@ -46,6 +63,7 @@ with st.container(border=True):
         if st.button("Apply Safe Cleansing",type="primary",use_container_width=True):
             cleaned, applied=prepare_raw_files(raw,findings)
             st.session_state.uploaded_files=cleaned
+            st.session_state.prepared_preview=cleaned
             st.session_state.prep_actions=applied
             st.session_state.data_prep_approved=True
             st.success(f"Applied {len(applied)} deterministic preparation actions. Semantic analysis will use the prepared data.")
@@ -58,12 +76,17 @@ if st.session_state.get("prep_actions"):
 if st.session_state.get("prepared_preview"):
     with st.container(border=True):
         st.markdown("### Before / after preview")
-        for name in list(raw)[:5]:
-            a=raw[name].head(5); b=st.session_state.prepared_preview[name].head(5)
+        for name in list(raw):
+            a=raw[name].head(5)
+            b=st.session_state.prepared_preview[name].head(5)
             st.markdown(f"**{name}**")
             left,right=st.columns(2)
-            with left: st.caption("RAW"); st.dataframe(a,use_container_width=True,hide_index=True)
-            with right: st.caption("PREPARED"); st.dataframe(b,use_container_width=True,hide_index=True)
+            with left:
+                st.caption("RAW")
+                st.dataframe(a,use_container_width=True,hide_index=True)
+            with right:
+                st.caption("PREPARED")
+                st.dataframe(b,use_container_width=True,hide_index=True)
 
 st.divider()
 c1,c2=st.columns(2)
